@@ -1,0 +1,75 @@
+---
+title: Agent Roles & Data Flow
+---
+
+flowchart LR
+    subgraph Inputs["📥 Inputs"]
+        PDF["📕 PDF Files"]
+        DOCX["📘 DOCX Files"]
+        TXT["📄 TXT/MD Files"]
+        TOPIC["📝 Essay Topic"]
+    end
+
+    subgraph DP["📄 Document Processor Agent"]
+        direction TB
+        DP_ROLE["**Role**: File Ingestion & Parsing"]
+        DP_IN["**Inputs**:<br/>• Raw files"]
+        DP_OUT["**Outputs**:<br/>• Extracted text<br/>• Document structure<br/>• Metadata"]
+        DP_LLM["**LLM Usage**: Metadata extraction<br/>when not in file properties"]
+    end
+
+    subgraph CA["🧠 Content Analyst Agent"]
+        direction TB
+        CA_ROLE["**Role**: Deep Understanding"]
+        CA_IN["**Inputs**:<br/>• Processed documents"]
+        CA_OUT["**Outputs**:<br/>• Theme identification<br/>• Argument mapping<br/>• Semantic chunks"]
+        CA_LLM["**LLM Usage**: Heavy<br/>Theme & argument analysis"]
+    end
+
+    subgraph QE["💬 Quote Extractor Agent"]
+        direction TB
+        QE_ROLE["**Role**: Relevance Detection"]
+        QE_IN["**Inputs**:<br/>• Documents + Analysis<br/>• Essay topic"]
+        QE_OUT["**Outputs**:<br/>• Verbatim quotes<br/>• Page locations<br/>• Relevance scores<br/>• Stance classification"]
+        QE_LLM["**LLM Usage**: Heavy<br/>Relevance & stance analysis"]
+    end
+
+    subgraph RG["📖 Reference Generator Agent"]
+        direction TB
+        RG_ROLE["**Role**: Citation Formatting"]
+        RG_IN["**Inputs**:<br/>• Document metadata<br/>• Quote locations"]
+        RG_OUT["**Outputs**:<br/>• Harvard full refs<br/>• In-text citations<br/>• Bibliography"]
+        RG_LLM["**LLM Usage**: Light<br/>Format validation"]
+    end
+
+    subgraph SA["🔗 Synthesis Agent"]
+        direction TB
+        SA_ROLE["**Role**: Final Assembly"]
+        SA_IN["**Inputs**:<br/>• All quotes<br/>• All references<br/>• Analysis results"]
+        SA_OUT["**Outputs**:<br/>• Clustered quotes<br/>• Argument map<br/>• Final report"]
+        SA_LLM["**LLM Usage**: Medium<br/>Clustering & summarization"]
+    end
+
+    subgraph Outputs["📤 Outputs"]
+        JSON["📋 JSON Data"]
+        MD["📝 Markdown Report"]  
+        BIB["📚 Bibliography"]
+    end
+
+    %% Data Flow
+    PDF --> DP
+    DOCX --> DP
+    TXT --> DP
+    
+    DP --> |"ProcessedDocument"| CA
+    TOPIC --> QE
+    CA --> |"ContentAnalysis"| QE
+    DP --> |"DocumentMetadata"| RG
+    QE --> |"ExtractedQuotes"| RG
+    QE --> |"ExtractedQuotes"| SA
+    RG --> |"References"| SA
+    CA --> |"Themes"| SA
+    
+    SA --> JSON
+    SA --> MD
+    RG --> BIB

@@ -1,0 +1,84 @@
+---
+title: Academic Quote Extractor v2 - Docling Architecture
+---
+
+flowchart TB
+    subgraph User["👤 User"]
+        SOURCES[("📚 Sources Directory<br/>PDFs, DOCX, TXT")]
+        TOPIC["📝 Essay Topic"]
+        CLI["💻 CLI Commands"]
+    end
+
+    subgraph GoApp["🔷 Go Application (aqe)"]
+        direction TB
+        
+        subgraph Commands["CLI Commands"]
+            INGEST["aqe ingest"]
+            EXTRACT["aqe extract"]
+            EXPORT["aqe export"]
+        end
+        
+        subgraph Core["Core Logic"]
+            DOCLING_CLIENT["Docling Client<br/>(HTTP)"]
+            CHUNKER["Chunk Processor<br/>(Python wrapper)"]
+            SEARCH["Search Engine<br/>(Weaviate client)"]
+            CLAUDE_WRAP["Claude Code<br/>Wrapper"]
+            HARVARD["Harvard<br/>Formatter"]
+            POSTPROC["Post-Processor<br/>(Quote Assembly)"]
+        end
+    end
+
+    subgraph External["🐳 Docker Services"]
+        DOCLING["📄 Docling-Serve<br/>:5001<br/>━━━━━━━━━━━━<br/>• PDF/DOCX parsing<br/>• Layout analysis<br/>• Table extraction<br/>• Metadata extraction"]
+        
+        WEAVIATE["🔍 Weaviate<br/>:8080<br/>━━━━━━━━━━━━<br/>• BM25 search<br/>• Vector search<br/>• Hybrid ranking"]
+    end
+
+    subgraph LLM["🤖 Claude Code CLI"]
+        CLAUDE["Claude<br/>━━━━━━━━━━━━<br/>• Relevance scoring<br/>• Explanation gen<br/>• Chunk selection"]
+    end
+
+    subgraph Storage["💾 SQLite"]
+        DB[("quotes.db<br/>━━━━━━━━━━━━<br/>• documents<br/>• chunks (verbatim)<br/>• extractions<br/>• quotes")]
+    end
+
+    subgraph Output["📤 Output"]
+        JSON["📋 JSON"]
+        MD["📝 Markdown"]
+        BIB["📚 BibTeX"]
+    end
+
+    %% Ingest Flow
+    SOURCES --> CLI
+    CLI --> INGEST
+    INGEST --> DOCLING_CLIENT
+    DOCLING_CLIENT -->|"POST /v1/convert"| DOCLING
+    DOCLING -->|"DoclingDocument JSON"| DOCLING_CLIENT
+    DOCLING_CLIENT --> CHUNKER
+    CHUNKER -->|"HierarchicalChunker"| CHUNKER
+    CHUNKER -->|"Chunks + Embeddings"| WEAVIATE
+    CHUNKER -->|"Chunks (verbatim)"| DB
+
+    %% Extract Flow
+    TOPIC --> CLI
+    CLI --> EXTRACT
+    EXTRACT --> SEARCH
+    SEARCH -->|"Hybrid Query"| WEAVIATE
+    WEAVIATE -->|"Top-K Chunks"| SEARCH
+    SEARCH --> CLAUDE_WRAP
+    CLAUDE_WRAP -->|"Prompt + Chunks"| CLAUDE
+    CLAUDE -->|"Chunk IDs + Explanations"| CLAUDE_WRAP
+    CLAUDE_WRAP --> POSTPROC
+    POSTPROC -->|"Lookup verbatim text"| DB
+    DB -->|"Exact quotes"| POSTPROC
+    POSTPROC --> HARVARD
+    HARVARD --> DB
+
+    %% Export Flow
+    CLI --> EXPORT
+    EXPORT --> DB
+    DB --> JSON
+    DB --> MD
+    DB --> BIB
+
+

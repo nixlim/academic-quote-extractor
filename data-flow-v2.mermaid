@@ -1,0 +1,42 @@
+---
+title: Quote Extraction Data Flow
+---
+
+sequenceDiagram
+    autonumber
+    participant U as 👤 User
+    participant CLI as 🔷 aqe CLI
+    participant D as 📄 Docling
+    participant W as 🔍 Weaviate
+    participant C as 🤖 Claude
+    participant DB as 💾 SQLite
+
+    Note over U,DB: INGEST PHASE
+    U->>CLI: aqe ingest ./papers/
+    CLI->>D: POST /v1/convert (PDF)
+    D-->>CLI: DoclingDocument JSON
+    CLI->>CLI: HierarchicalChunker
+    CLI->>W: Store chunks + embeddings
+    CLI->>DB: Store chunks (verbatim text)
+    CLI-->>U: ✓ Ingested 5 documents, 234 chunks
+
+    Note over U,DB: EXTRACT PHASE
+    U->>CLI: aqe extract "social media polarization"
+    CLI->>W: Hybrid search (BM25 + vector)
+    W-->>CLI: Top 50 chunks with metadata
+    
+    CLI->>C: Prompt: Topic + Chunks
+    Note right of C: Claude analyzes relevance<br/>Returns chunk IDs only<br/>NO generated quote text
+    C-->>CLI: Selected chunk IDs + explanations
+    
+    CLI->>DB: Lookup chunk IDs
+    DB-->>CLI: Verbatim text + page numbers
+    CLI->>CLI: Format Harvard references
+    CLI->>DB: Save extraction
+    CLI-->>U: ✓ Found 12 relevant quotes
+
+    Note over U,DB: EXPORT PHASE
+    U->>CLI: aqe export 1 --format markdown
+    CLI->>DB: Get extraction + quotes
+    DB-->>CLI: Full quote records
+    CLI-->>U: quotes.md with citations
