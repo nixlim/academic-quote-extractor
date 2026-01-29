@@ -1,50 +1,146 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+SYNC IMPACT REPORT
+==================
+Version change: N/A (initial) → 1.0.0
+Modified principles: N/A (initial constitution)
+Added sections:
+  - Core Principles (5 principles)
+  - Code Quality Standards
+  - Architectural Constraints & Output Requirements
+  - Governance
+Removed sections: N/A
+Templates requiring updates:
+  - .specify/templates/plan-template.md: ✅ Compatible (Constitution Check section exists)
+  - .specify/templates/spec-template.md: ✅ Compatible (no constitution-specific refs)
+  - .specify/templates/tasks-template.md: ✅ Compatible (no constitution-specific refs)
+  - .specify/templates/checklist-template.md: ✅ Compatible (no constitution-specific refs)
+Follow-up TODOs: None
+-->
+
+# Academic Quote Extractor Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Deterministic Quote Retrieval
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+The system MUST never allow the LLM to generate quote text. Claude outputs chunk IDs only;
+the system replaces these IDs with verbatim text from the database. This eliminates citation
+hallucination entirely.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+**Non-negotiable rules:**
+- Quote text MUST be retrieved from SQLite by chunk ID, never generated
+- LLM responses containing quote text MUST be rejected at the application layer
+- Chunk IDs serve as the single source of truth for all quote content
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+**Rationale:** Academic integrity depends on accurate citations. LLM hallucination of quotes
+is unacceptable in scholarly work.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### II. Hybrid RAG Architecture
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+Use semantic search (BM25 + vector) for retrieval; LLM only for relevance scoring and
+explanation generation. Optimize for cost-effectiveness over maximum accuracy.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+**Non-negotiable rules:**
+- Retrieval MUST use hybrid BM25 + vector search via Weaviate
+- LLM usage MUST be limited to: (1) relevance scoring of retrieved chunks, (2) generating
+  explanations for why a quote is relevant
+- System MUST NOT use LLM for embedding generation when cheaper alternatives exist
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+**Rationale:** Balancing retrieval quality with operational costs ensures the tool remains
+practical for regular academic use.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+### III. Single Purpose Focus
+
+Extract quotes with Harvard references and relevance explanations. No theme clustering,
+no argument mapping, no contradiction detection.
+
+**Non-negotiable rules:**
+- Feature requests for theme clustering MUST be rejected
+- Feature requests for argument mapping MUST be rejected
+- Feature requests for contradiction detection MUST be rejected
+- Every feature MUST directly serve quote extraction with citations
+
+**Rationale:** Scope creep destroys projects. A focused tool that does one thing well
+outperforms a bloated tool that does many things poorly.
+
+### IV. Go-First Development
+
+All core logic MUST be implemented in Go. Python is permitted only for the Docling chunking
+wrapper. Minimize external dependencies.
+
+**Non-negotiable rules:**
+- CLI, retrieval logic, reference formatting, and database operations MUST be in Go
+- Python usage MUST be limited to `scripts/` directory for Docling integration only
+- New dependencies MUST be justified; prefer standard library solutions
+
+**Rationale:** Go provides a single binary deployment, strong typing, and excellent
+concurrency—ideal for CLI tools and services.
+
+### V. Docker-Based Services
+
+Docling-serve and Weaviate run in Docker. SQLite is embedded for persistence.
+
+**Non-negotiable rules:**
+- Weaviate MUST run as a Docker container (not embedded)
+- Docling-serve MUST run as a Docker container
+- SQLite MUST be used for persistent storage (no external database servers)
+- Docker Compose MUST be provided for local development setup
+
+**Rationale:** Docker containers isolate complex dependencies (ML models, vector DB) while
+SQLite keeps the core application simple and portable.
+
+## Code Quality Standards
+
+**Test coverage requirements:**
+- All CLI commands MUST have test coverage
+- Integration tests MUST use real Docker services (Weaviate, Docling-serve)
+- Contract tests MUST exist for all external APIs (Docling, Weaviate, Anthropic)
+
+**Error handling requirements:**
+- All errors MUST include meaningful messages suitable for CLI users
+- Errors MUST distinguish between user errors (invalid input) and system errors (service
+  unavailable)
+- Stack traces MUST NOT be shown to users in production mode
+
+**Code review gates:**
+- All changes MUST pass `go test ./...` before merge
+- All changes MUST pass `go vet` and configured linters
+- Integration tests MAY be skipped for pure refactoring PRs (with justification)
+
+## Architectural Constraints & Output Requirements
+
+**Package structure:**
+- Maximum 3 main packages: `cmd/aqe`, `internal/*`, `scripts/`
+- No custom abstractions over Weaviate or SQLite clients (use official clients directly)
+- Harvard reference formatting MUST be implemented in pure Go (no external libraries)
+
+**Data model constraints:**
+- Chunk IDs MUST be the primary key for quote lookup
+- Formatted quotes MUST NOT be stored; always reconstruct from chunk ID + metadata
+- Document metadata (author, year, title) MUST be stored separately from chunk content
+
+**Output format requirements:**
+- JSON output MUST be valid and parseable by standard tools (`jq`, etc.)
+- Markdown output MUST render correctly in common viewers (GitHub, VS Code, Obsidian)
+- In-text citations MUST follow strict Harvard format: `(Author, Year, p. X)`
+- Full references MUST be complete and verifiable (no placeholder data)
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution supersedes all other development practices for the Academic Quote
+Extractor project.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Amendment procedure:**
+1. Proposed amendments MUST be documented with rationale
+2. Amendments MUST include a migration plan for existing code
+3. Version MUST be incremented according to semantic versioning:
+   - MAJOR: Principle removal or backward-incompatible redefinition
+   - MINOR: New principle added or existing principle materially expanded
+   - PATCH: Clarifications, wording fixes, non-semantic refinements
+
+**Compliance:**
+- All PRs MUST verify compliance with relevant principles
+- Complexity that violates principles MUST be justified in the PR description
+- Unjustified violations MUST block merge
+
+**Version**: 1.0.0 | **Ratified**: 2026-01-29 | **Last Amended**: 2026-01-29

@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Weaviate Chunk Schema",
+  "description": "Schema for storing document chunks in Weaviate for hybrid search",
+  
+  "weaviate_class": {
+    "class": "Chunk",
+    "description": "Text chunk from academic document for semantic search",
+    "vectorizer": "text2vec-ollama",
+    "moduleConfig": {
+      "text2vec-ollama": {
+        "model": "nomic-embed-text",
+        "apiEndpoint": "http://ollama:11434"
+      }
+    },
+    "properties": [
+      {
+        "name": "text",
+        "dataType": ["text"],
+        "description": "Chunk text content (vectorized for semantic search)",
+        "indexFilterable": true,
+        "indexSearchable": true,
+        "moduleConfig": {
+          "text2vec-ollama": {
+            "skip": false,
+            "vectorizePropertyName": false
+          }
+        }
+      },
+      {
+        "name": "chunk_id",
+        "dataType": ["string"],
+        "description": "Docling self_ref - primary key linking to SQLite chunks.id",
+        "indexFilterable": true,
+        "indexSearchable": false,
+        "moduleConfig": {
+          "text2vec-ollama": {
+            "skip": true
+          }
+        }
+      },
+      {
+        "name": "document_id",
+        "dataType": ["int"],
+        "description": "Foreign key to SQLite documents.id",
+        "indexFilterable": true,
+        "indexSearchable": false,
+        "moduleConfig": {
+          "text2vec-ollama": {
+            "skip": true
+          }
+        }
+      },
+      {
+        "name": "page_num",
+        "dataType": ["int"],
+        "description": "Page number in source document (1-indexed)",
+        "indexFilterable": true,
+        "indexSearchable": false,
+        "moduleConfig": {
+          "text2vec-ollama": {
+            "skip": true
+          }
+        }
+      },
+      {
+        "name": "section_path",
+        "dataType": ["string[]"],
+        "description": "Section heading hierarchy as array",
+        "indexFilterable": true,
+        "indexSearchable": false,
+        "moduleConfig": {
+          "text2vec-ollama": {
+            "skip": true
+          }
+        }
+      }
+    ]
+  },
+
+  "hybrid_search_config": {
+    "description": "Configuration for hybrid BM25 + vector search",
+    "default_alpha": 0.5,
+    "alpha_description": "0 = pure BM25, 1 = pure vector, 0.5 = balanced",
+    "default_limit": 50,
+    "limit_description": "Number of chunks to retrieve before LLM scoring"
+  },
+
+  "example_queries": {
+    "hybrid_search": {
+      "description": "Search for chunks relevant to a topic",
+      "graphql": "{ Get { Chunk( hybrid: { query: \"impact of social media on political polarization\" alpha: 0.5 } limit: 50 ) { text chunk_id document_id page_num section_path _additional { score } } } }"
+    },
+    "filter_by_document": {
+      "description": "Get all chunks from a specific document",
+      "graphql": "{ Get { Chunk( where: { path: [\"document_id\"] operator: Equal valueInt: 1 } ) { text chunk_id page_num } } }"
+    }
+  },
+
+  "go_interface": {
+    "description": "Go client interface for Weaviate operations",
+    "code": "// internal/search/weaviate.go\n\ntype WeaviateClient struct {\n    client *weaviate.Client\n}\n\ntype ChunkResult struct {\n    Text        string   `json:\"text\"`\n    ChunkID     string   `json:\"chunk_id\"`\n    DocumentID  int64    `json:\"document_id\"`\n    PageNum     int      `json:\"page_num\"`\n    SectionPath []string `json:\"section_path\"`\n    Score       float64  `json:\"score\"`\n}\n\n// CreateSchema creates the Chunk class if it doesn't exist\nfunc (w *WeaviateClient) CreateSchema() error\n\n// InsertChunk adds a chunk to Weaviate (embedding auto-generated)\nfunc (w *WeaviateClient) InsertChunk(chunk ChunkResult) (string, error)\n\n// HybridSearch performs BM25+vector search for relevant chunks\nfunc (w *WeaviateClient) HybridSearch(query string, limit int, alpha float64) ([]ChunkResult, error)\n\n// DeleteByDocumentID removes all chunks for a document\nfunc (w *WeaviateClient) DeleteByDocumentID(documentID int64) error"
+  },
+
+  "contract_tests": [
+    {
+      "name": "TestWeaviateSchemaCreation",
+      "description": "Verify schema can be created and retrieved"
+    },
+    {
+      "name": "TestWeaviateInsertChunk",
+      "description": "Verify chunk insertion with auto-embedding"
+    },
+    {
+      "name": "TestWeaviateHybridSearch",
+      "description": "Verify hybrid search returns ranked results with scores"
+    },
+    {
+      "name": "TestWeaviateFilterByDocument",
+      "description": "Verify filtering by document_id works"
+    },
+    {
+      "name": "TestWeaviateDeleteByDocument",
+      "description": "Verify bulk delete by document_id"
+    }
+  ]
+}

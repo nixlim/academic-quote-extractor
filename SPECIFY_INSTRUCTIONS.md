@@ -30,11 +30,9 @@ Launch Claude Code in the project directory and run:
 
 ```
 /speckit.constitution
-```
 
 **Prompt for constitution:**
 
-```
 Create principles for the Academic Quote Extractor project with the following governing guidelines:
 
 CORE PRINCIPLES:
@@ -75,11 +73,16 @@ Run the specification command:
 
 ```
 /speckit.specify
-```
 
 **Prompt for specification:**
 
-```
+Review the following files:
+[Academic Quote Extractor v2 - Revised Specification](SPEC-v2)
+architecture-v2.mermaid
+data-flow-v2.mermaid
+agent-roles.mermaid
+DOCLING_HOWTO.md
+
 Build AQE (Academic Quote Extractor), a Go CLI application for extracting relevant quotes from academic documents with Harvard-style citations.
 
 USER JOURNEYS (in priority order):
@@ -128,14 +131,12 @@ Before planning, run the clarification workflow:
 /speckit.clarify
 ```
 
-This will ask structured questions about ambiguous areas. Key clarifications needed:
+This will ask structured questions about ambiguous areas. Key clarifications resolved:
 
-1. **Authentication**: Does Claude Code CLI require API key configuration? How is it passed?
-2. **Embedding Model**: Which OpenAI model for embeddings? text-embedding-3-small or ada-002?
-3. **Docling Chunking**: Use docling-serve endpoint or Python wrapper script?
-4. **Weaviate Schema**: Class name, properties, vectorizer configuration?
-5. **Harvard Variants**: UK or US date format? Include DOI/URL when available?
-6. **Error Recovery**: What happens if Docling fails mid-batch? Resume or restart?
+1. **Embedding Model**: Local embeddings via Weaviate's text2vec-ollama module (offline operation)
+2. **Docling Chunking**: Python wrapper script with HierarchicalChunker for metadata preservation
+3. **Harvard Variants**: US style (month-day-year, double quotes), include DOI/URL when available, modular for future citation styles
+4. **Error Recovery**: Resume capability - successfully ingested documents retained, re-run continues from failure point
 
 ---
 
@@ -145,53 +146,48 @@ Run the plan command:
 
 ```
 /speckit.plan
-```
 
-**Prompt for plan:**
-
-```
 Create implementation plan for Academic Quote Extractor with these technical decisions:
 
 LANGUAGE/RUNTIME:
-- Go 1.22+
+- Go 1.25.6+ (latest stable)
 - Python 3.11+ (only for chunk_helper.py script)
 
 DEPENDENCIES:
 - github.com/spf13/cobra (CLI framework)
 - github.com/weaviate/weaviate-go-client/v4 (Weaviate client)
 - github.com/mattn/go-sqlite3 (SQLite driver)
-- github.com/sashabaranov/go-openai (embedding generation)
 
 DOCKER SERVICES:
 - Docling: quay.io/docling-project/docling-serve:latest on port 5001
-- Weaviate: cr.weaviate.io/semitechnologies/weaviate:1.27.0 on port 8080
+- Weaviate: cr.weaviate.io/semitechnologies/weaviate:1.27.0 on port 8080 with text2vec-ollama module
+- Ollama: ollama/ollama:latest on port 11434 with nomic-embed-text model
 
 STORAGE:
 - SQLite database at ./quotes.db (default, configurable via --db flag)
-- Weaviate for vector storage with text2vec-openai module
+- Weaviate for vector storage with text2vec-ollama vectorizer (local embeddings)
 
 TESTING:
 - Go standard testing with testify/assert
 - Integration tests require Docker services running
-- Contract tests for Docling and Weaviate APIs
+- Contract tests for Docling, Weaviate, and Ollama APIs
 
 PROJECT STRUCTURE (single project):
-src/
-├── cmd/aqe/main.go
-├── internal/
-│   ├── cli/          # Command implementations
-│   ├── docling/      # Docling HTTP client
-│   ├── claude/       # Claude Code CLI wrapper
-│   ├── search/       # Weaviate client
-│   ├── store/        # SQLite operations
-│   ├── harvard/      # Reference formatter
-│   └── models/       # Domain types
-├── scripts/
-│   └── chunk_helper.py
-└── tests/
-    ├── contract/
-    ├── integration/
-    └── unit/
+cmd/aqe/main.go
+internal/
+├── cli/          # Command implementations
+├── docling/      # Docling HTTP client
+├── claude/       # Claude Code CLI wrapper
+├── search/       # Weaviate client
+├── store/        # SQLite operations
+├── harvard/      # Reference formatter (modular for future citation styles)
+└── models/       # Domain types
+scripts/
+└── chunk_helper.py  # Python wrapper for Docling HierarchicalChunker
+tests/
+├── contract/
+├── integration/
+└── unit/
 
 CLAUDE CODE INTEGRATION:
 - Wrap claude CLI binary
@@ -199,15 +195,24 @@ CLAUDE CODE INTEGRATION:
 - Parse JSON response for chunk IDs + explanations
 - Strict output format validation
 
+CHUNKING CONFIGURATION:
+- Use Docling HierarchicalChunker via Python wrapper (scripts/chunk_helper.py)
+- Target chunk size: ~800 tokens with 25% overlap (~200 tokens)
+- Preserves section headings, page numbers, bounding boxes
+- Overlap ensures sentences/phrases not split at boundaries
+
 EMBEDDING PIPELINE:
-- Use OpenAI text-embedding-3-small (1536 dimensions)
-- Batch embeddings in groups of 100 chunks
-- Store embedding UUID reference in SQLite chunks table
+- Weaviate auto-generates embeddings via text2vec-ollama module on insert
+- No explicit embedding calls needed in Go code
+- Ollama runs nomic-embed-text model (768 dimensions, 2K context window)
+- Chosen for: 2K context (ideal for academic chunks), outperforms OpenAI ada-002, 274MB footprint
 
 REFERENCE FORMATTING:
-- Harvard UK style (day-month-year)
+- Harvard US style (month-day-year, double quotation marks)
+- Include DOI/URL when available
 - Support: Book, JournalArticle, Website, BookChapter
 - In-text: (Author, Year, p. X) or (Author et al., Year) for 3+ authors
+- Modular design to support APA, MLA, Chicago in future
 ```
 
 ---
@@ -330,14 +335,13 @@ academic_quote_extractor/
 ## Environment Variables
 
 ```bash
-# Required for embedding generation
-export OPENAI_API_KEY="sk-..."
-
 # Optional: Override feature detection for non-Git repos
 export SPECIFY_FEATURE="001-aqe-core"
 
 # Optional: GitHub token for API requests
 export GH_TOKEN="ghp_..."
+
+# Note: No OPENAI_API_KEY needed - embeddings generated locally via Ollama
 ```
 
 ---
@@ -370,6 +374,16 @@ services:
     volumes:
       - docling-cache:/app/models
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    # Pull embedding model on first run:
+    # docker exec -it ollama ollama pull nomic-embed-text
+    # Model: 274MB, 768 dimensions, 2K context window - ideal for academic passages
+
   weaviate:
     image: cr.weaviate.io/semitechnologies/weaviate:1.27.0
     ports:
@@ -379,15 +393,18 @@ services:
       QUERY_DEFAULTS_LIMIT: 25
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
-      DEFAULT_VECTORIZER_MODULE: 'text2vec-openai'
-      ENABLE_MODULES: 'text2vec-openai,generative-openai'
-      OPENAI_APIKEY: ${OPENAI_API_KEY}
+      DEFAULT_VECTORIZER_MODULE: 'text2vec-ollama'
+      ENABLE_MODULES: 'text2vec-ollama'
+      OLLAMA_API_ENDPOINT: 'http://ollama:11434'
       CLUSTER_HOSTNAME: 'node1'
     volumes:
       - weaviate-data:/var/lib/weaviate
+    depends_on:
+      - ollama
 
 volumes:
   docling-cache:
+  ollama-models:
   weaviate-data:
 ```
 
