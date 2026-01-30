@@ -7,7 +7,7 @@ academic documents with Harvard-style citations.
 
 ## Authors
 
-- **niXLim** -- Project creator, architecture, specification, and implementation
+- **NiXLiM** -- Project creator, architecture, specification, and implementation
 
 ## AI Contributions
 
@@ -17,7 +17,7 @@ This project was developed with substantial AI assistance:
   scaffolding, Python chunker script, documentation, and code review
 
 All AI-generated code was reviewed, tested against live infrastructure, and
-validated by the project author.
+validated by the AI with human oversight.
 
 ## How to Contribute
 
