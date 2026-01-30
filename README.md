@@ -1,12 +1,12 @@
 __[WARNING]__
 # THIS IS EXPERIMENTAL SOFTWARE
-I wrangled this tool with AI because reading Curturally Response Computing for my course was a too painful time consumption activity.
+I wrangled this tool with AI because reading Curturally Response Computing for my course, in full, would be too painful. Literally. My brain would melt. It is a quarter knowledge with verbose ages old human pain as a remainder.
 
-It turned out quite useful so far and gave me ideas on how to scale this. 
+`aqe` turned out quite useful so far, though, and gave me ideas on how to scale this. It is agent use friendly ;) Just like any CLI.
 
-The tested paths work - see [Project Status](STATUS.md)
+The tested parts work and wrangling is ongoing - see [Project Status](STATUS.md)
 
-IT WORKS, YMMV
+Keep building,
 
 NiXLiM
 
@@ -179,4 +179,4 @@ tests/
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-Copyright (c) 2026 niXLim @ Foundry of Zero
+CopyAI (cAI) 2026 NiXLiM @ Foundry of Zero.AI
