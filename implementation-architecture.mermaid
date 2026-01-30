@@ -1,0 +1,105 @@
+---
+title: "Implementation Architecture (as-built)"
+---
+
+flowchart TB
+    subgraph CLI["cmd/aqe/main.go"]
+        MAIN["main()<br/>calls cli.Execute()"]
+    end
+
+    subgraph CobraCommands["internal/cli/ -- Cobra Commands"]
+        direction TB
+        ROOT["root.go<br/>--db, --debug<br/>PersistentPreRunE: open DB, migrate"]
+        INGEST["ingest.go<br/>aqe ingest path<br/>--title, --author, --year"]
+        EXTRACT["extract.go<br/>aqe extract topic<br/>--max-quotes, --min-relevance"]
+        EXPORT["export.go<br/>aqe export id<br/>--format, --output"]
+        LIST["list.go<br/>aqe list"]
+        META["meta.go<br/>aqe meta fix"]
+        STATUS["status.go<br/>aqe status"]
+    end
+
+    subgraph Clients["internal/ -- Service Clients"]
+        direction TB
+        DOCLING_C["docling/<br/>client.go -- HTTP POST /v1/convert/file<br/>types.go -- DoclingDocument, TextItem"]
+        CHUNKER_C["chunker/<br/>chunker.go -- exec Python stdin/stdout<br/>Falls back to text items if unavailable"]
+        SEARCH_C["search/<br/>weaviate.go -- InsertChunk, HybridSearch, Delete<br/>schema.go -- Chunk class, text2vec-ollama"]
+        CLAUDE_C["claude/<br/>wrapper.go -- exec claude CLI, parse JSON envelope<br/>prompt.go -- text/template prompts"]
+    end
+
+    subgraph DataLayer["internal/ -- Data Layer"]
+        direction TB
+        STORE["store/<br/>sqlite.go -- CRUD for all 4 tables<br/>migrations.go -- DDL schema"]
+        MODELS["models/<br/>document.go -- Document, SourceType<br/>chunk.go -- Chunk, BBox<br/>extraction.go -- Extraction<br/>quote.go -- ExtractedQuote"]
+        HARVARD["harvard/<br/>formatter.go -- Formatter interface<br/>harvard_us.go -- Book, Article, Website, Chapter<br/>types.go -- Author, FormatAuthors"]
+    end
+
+    subgraph ExternalServices["Docker Services (docker-compose.yml)"]
+        DOCLING_S["Docling-serve :5001<br/>PDF/DOCX/TXT parsing<br/>Layout analysis"]
+        WEAVIATE_S["Weaviate :8080<br/>BM25 + vector search<br/>text2vec-ollama vectorizer"]
+        OLLAMA_S["Ollama :11434<br/>nomic-embed-text<br/>768 dims, 2K context"]
+    end
+
+    subgraph ExternalCLI["External CLI"]
+        CLAUDE_S["claude CLI<br/>--print --output-format json<br/>Relevance scoring"]
+    end
+
+    subgraph Storage["Embedded Storage"]
+        SQLITE[("quotes.db<br/>documents, chunks,<br/>extractions, extracted_quotes")]
+    end
+
+    subgraph PythonScript["scripts/"]
+        PYCHUNK["chunk_helper.py<br/>HierarchicalChunker<br/>stdin JSON -> stdout JSONL"]
+    end
+
+    subgraph Output["Output Formats"]
+        MD["Markdown<br/>Blockquotes + bibliography"]
+        JSON_OUT["JSON<br/>Structured quotes + metadata"]
+        BIBTEX["BibTeX<br/>Bibliography entries"]
+    end
+
+    %% CLI entry
+    MAIN --> ROOT
+    ROOT --> INGEST & EXTRACT & EXPORT & LIST & META & STATUS
+
+    %% Ingest flow
+    INGEST --> DOCLING_C
+    DOCLING_C -->|"HTTP"| DOCLING_S
+    INGEST --> CHUNKER_C
+    CHUNKER_C -->|"exec python3"| PYCHUNK
+    INGEST --> SEARCH_C
+    SEARCH_C -->|"gRPC/HTTP"| WEAVIATE_S
+    WEAVIATE_S -->|"auto-embed"| OLLAMA_S
+    INGEST --> STORE
+
+    %% Extract flow
+    EXTRACT --> SEARCH_C
+    EXTRACT --> CLAUDE_C
+    CLAUDE_C -->|"exec"| CLAUDE_S
+    EXTRACT --> STORE
+    EXTRACT --> HARVARD
+
+    %% Export flow
+    EXPORT --> STORE
+    EXPORT --> HARVARD
+    EXPORT --> MD & JSON_OUT & BIBTEX
+
+    %% List/Meta/Status
+    LIST --> STORE
+    META --> STORE
+    STATUS -->|"HTTP health checks"| DOCLING_S & WEAVIATE_S & OLLAMA_S
+    STATUS --> SQLITE
+
+    %% Data layer
+    STORE --> SQLITE
+    STORE --> MODELS
+    HARVARD --> MODELS
+
+    %% Styling
+    classDef hardcoded fill:#fff3cd,stroke:#ffc107,color:#000
+    classDef implemented fill:#d4edda,stroke:#28a745,color:#000
+    classDef external fill:#cce5ff,stroke:#007bff,color:#000
+    classDef fallback fill:#f8d7da,stroke:#dc3545,color:#000
+
+    class DOCLING_S,WEAVIATE_S,OLLAMA_S,CLAUDE_S external
+    class CHUNKER_C fallback
+    class ROOT,INGEST,EXTRACT,EXPORT,LIST,META,STATUS implemented

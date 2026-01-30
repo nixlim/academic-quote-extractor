@@ -1,0 +1,153 @@
+---
+title: "Implemented Data Flow (as-built, verified by live testing)"
+---
+
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant CLI as aqe CLI<br/>(Cobra)
+    participant DC as docling/<br/>client.go
+    participant D as Docling<br/>:5001
+    participant CH as chunker/<br/>chunker.go
+    participant PY as chunk_helper.py
+    participant WC as search/<br/>weaviate.go
+    participant W as Weaviate<br/>:8080
+    participant O as Ollama<br/>:11434
+    participant CC as claude/<br/>wrapper.go
+    participant CL as claude CLI
+    participant H as harvard/<br/>harvard_us.go
+    participant S as store/<br/>sqlite.go
+    participant DB as quotes.db
+
+    Note over U,DB: INGEST PHASE (aqe ingest path --title T --author A --year Y)
+
+    U->>CLI: aqe ingest paper.pdf --title ... --author ... --year ...
+    CLI->>CLI: getFilesToIngest(path)<br/>filter .pdf/.docx/.txt/.md
+
+    loop For each file
+        CLI->>S: CalculateChecksum(file) [SHA-256]
+        CLI->>S: GetDocumentByChecksum()
+        S->>DB: SELECT ... WHERE checksum = ?
+        alt Already ingested
+            DB-->>S: existing record
+            S-->>CLI: skip duplicate
+        else New document
+            DB-->>S: nil
+            CLI->>DC: ConvertFile(ctx, filePath)
+            DC->>D: POST /v1/convert/file [multipart]
+            Note right of D: Parses PDF layout,<br/>extracts text items,<br/>metadata, tables
+            D-->>DC: DoclingDocument JSON
+            DC-->>CLI: *DoclingDocument
+
+            alt Python chunker available
+                CLI->>CH: ChunkDocument(ctx, docJSON)
+                CH->>PY: stdin: DoclingDocument JSON
+                Note right of PY: HierarchicalChunker<br/>(no token/overlap config)
+                PY-->>CH: stdout: JSON lines (id, text, page, section, bbox)
+                CH-->>CLI: []ChunkOutput
+            else Chunker unavailable (fallback)
+                Note over CLI: [DEBUG] Chunker failed,<br/>falling back to text items
+                CLI->>CLI: textItemsToChunks(doc, docID)<br/>uses DoclingDocument.Texts directly
+            end
+
+            CLI->>S: InsertDocument(doc)
+            S->>DB: INSERT INTO documents
+            DB-->>S: document ID
+
+            loop For each chunk
+                CLI->>WC: InsertChunk(ctx, id, docID, text, page, sections)
+                WC->>W: POST object to Chunk class
+                W->>O: Auto-embed via text2vec-ollama<br/>(nomic-embed-text, 768 dims)
+                O-->>W: embedding vector
+                W-->>WC: UUID
+                Note right of WC: If insert fails:<br/>continues silently<br/>(debug-only warning)
+            end
+
+            CLI->>S: InsertChunks(chunks) [batch]
+            S->>DB: INSERT INTO chunks (transaction)
+        end
+    end
+
+    CLI-->>U: Ingested N documents, M chunks
+
+    Note over U,DB: EXTRACT PHASE (aqe extract topic --max-quotes 20 --min-relevance 60)
+
+    U->>CLI: aqe extract "cultural bias in algorithms"
+    CLI->>S: GetChunkCount()
+    S->>DB: SELECT count(*) FROM chunks
+    alt No chunks
+        CLI-->>U: Error: No documents in corpus
+    end
+
+    CLI->>WC: HybridSearch(ctx, topic, 50, alpha=0.5)
+    WC->>W: GraphQL hybrid query<br/>BM25 + vector, limit 50
+    W-->>WC: Top 50 ChunkResults<br/>(text, chunkID, docID, page, score)
+    WC-->>CLI: []ChunkResult
+
+    CLI->>CC: ExtractQuotes(ctx, task)
+    CC->>CC: buildPrompt(topic, chunks)<br/>via text/template
+    CC->>CL: exec: claude --print<br/>--output-format json<br/>-p "prompt" [120s timeout]
+    Note right of CL: Scores each chunk 0-100<br/>Returns chunk IDs only<br/>NEVER generates quote text
+    CL-->>CC: JSON envelope<br/>{type: "result", result: "..."}
+    CC->>CC: Parse outer envelope<br/>Extract result string<br/>Parse inner JSON
+    CC-->>CLI: ExtractionResponse<br/>{selected_chunks: [...]}
+
+    CLI->>CLI: Filter: relevance >= min-relevance<br/>Cap at max-quotes
+
+    loop For each selected chunk
+        CLI->>S: Raw SQL: JOIN chunks + documents
+        Note right of S: Bypasses Store methods,<br/>uses db.DB().QueryRow() directly
+        S->>DB: SELECT c.*, d.* WHERE c.id = ?
+        DB-->>S: chunk text + document metadata
+        CLI->>H: FormatInText(ref)
+        H-->>CLI: "(Author, Year)" or "(Author, Year, p. N)"
+    end
+
+    CLI->>S: Raw SQL: INSERT INTO extractions
+    CLI->>S: Raw SQL: INSERT INTO extracted_quotes [loop]
+    S->>DB: INSERT extraction + quotes
+
+    CLI-->>U: Extraction #N: "topic"<br/>Retrieved M quotes (relevance >= 60)<br/>Quote 1 (Relevance: 92/100)<br/>"verbatim text..."<br/> -- (Author, Year)<br/>...<br/>Saved as extraction #N. Export with: aqe export N
+
+    Note over U,DB: LIST PHASE (aqe list)
+
+    U->>CLI: aqe list
+    CLI->>S: Raw SQL: SELECT + COUNT GROUP BY
+    S->>DB: SELECT extractions with quote counts
+    DB-->>S: rows
+    CLI-->>U: #1: "topic" - 20 quotes | date<br/>Export: aqe export 1
+
+    Note over U,DB: EXPORT PHASE (aqe export id --format markdown --output file)
+
+    U->>CLI: aqe export 1 --format markdown
+    CLI->>S: Raw SQL: SELECT extraction WHERE id = ?
+    S->>DB: query
+    DB-->>S: extraction record
+    CLI->>S: Raw SQL: JOIN extracted_quotes + chunks + documents
+    S->>DB: query
+    DB-->>S: quotes with full details
+
+    alt format = markdown
+        CLI->>H: FormatInText(ref) per quote
+        CLI->>H: FormatFull(ref) per unique document
+        CLI-->>U: # Quotes: topic<br/>> "verbatim text"<br/>> -- (Author, Year)<br/>> **Relevance (N/100)**: explanation<br/>## Bibliography<br/>Author (Year) *Title*. Publisher.
+    else format = json
+        CLI->>H: FormatInText + FormatFull per quote
+        CLI-->>U: {"extraction": {...}, "quotes": [...]}
+    else format = bibtex
+        CLI-->>U: @misc{key, author={...}, title={...}, year={...}}
+    end
+
+    Note over U,DB: META FIX PHASE (aqe meta fix)
+
+    U->>CLI: aqe meta fix
+    CLI->>S: Raw SQL: SELECT documents WHERE title/author/year IS NULL
+    S->>DB: query
+    DB-->>S: incomplete documents
+    loop For each incomplete document
+        CLI-->>U: Document: filename<br/>Author: (missing)<br/>Year: (missing)
+        U->>CLI: stdin: author name, year
+        CLI->>S: Raw SQL: UPDATE documents SET ...
+        S->>DB: update
+    end
+    CLI-->>U: Updated / All documents have complete metadata
