@@ -94,9 +94,9 @@ A student runs the metadata fix command to interactively complete missing metada
 ### Edge Cases
 
 - What happens when the document parsing service is unavailable? System displays a clear error message indicating the service is down and how to start it.
-- What happens when a PDF has no extractable text (scanned image)? System attempts OCR if available, otherwise reports that no text could be extracted.
+- What happens when a PDF has no extractable text (scanned image)? Docling-serve handles OCR automatically when configured; system reports "no text extracted" if OCR is not available or fails. (Note: OCR configuration is handled by Docling-serve, not this application.)
 - What happens when the search service is unavailable during extraction? System displays a clear error message indicating the service is down.
-- What happens when a quote spans multiple pages? System includes the starting page number in the citation.
+- What happens when a quote spans multiple pages? System includes the starting page number in the citation. The chunk's page_num field stores the first page where the chunk begins; page ranges are not tracked as chunks are sized to typically fit within a single page.
 - What happens when author names contain non-ASCII characters? System preserves the original characters in citations.
 - What happens when a document has multiple authors? System formats according to Harvard style (two authors: "Smith and Jones"; three or more: "Smith et al.").
 
@@ -138,8 +138,8 @@ A student runs the metadata fix command to interactively complete missing metada
 
 ### Measurable Outcomes
 
-- **SC-001**: Users can ingest a 100-page document in under 60 seconds.
-- **SC-002**: Users can extract quotes from a corpus of 10 documents in under 10 seconds.
+- **SC-001**: Users can ingest a 100-page document in under 60 seconds. (Baseline: Apple M1/M2 or equivalent x86_64 with 16GB RAM, SSD storage, Docker services running locally)
+- **SC-002**: Users can extract quotes from a corpus of 10 documents in under 10 seconds. (Measured with warm cache; initial extraction may be slower due to model loading)
 - **SC-003**: 100% of output quotes match verbatim text from source documents (zero citation hallucination).
 - **SC-004**: Harvard references pass manual verification in 100% of cases (correct author format, year, page number, punctuation).
 - **SC-005**: All CLI commands exit with code 0 on success and non-zero on error, with meaningful error messages.

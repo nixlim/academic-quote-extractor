@@ -1,2 +1,57 @@
+# OS files
 .DS_Store
+Thumbs.db
+*.tmp
+*.swp
+
+# IDE
+.vscode/
+.idea/
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+aqe
+
+# Go dependency
+vendor/
+
+# SQLite database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# Logs
+*.log
+*.log.*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Test output
+coverage.out
+coverage.html
+
+# Build
+dist/
+build/
+
+# OpenCode
 .opencode/.DS_Store

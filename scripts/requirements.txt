@@ -1,0 +1,3 @@
+# Python dependencies for chunking script
+docling>=2.70.0
+docling-core>=2.0.0

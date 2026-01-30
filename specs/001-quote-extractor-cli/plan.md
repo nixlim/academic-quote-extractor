@@ -3,6 +3,12 @@
 **Branch**: `001-quote-extractor-cli` | **Date**: 2026-01-29 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/001-quote-extractor-cli/spec.md`
 
+## Architecture Diagrams
+
+- **System Architecture**: [architecture-v2.mermaid](../../architecture-v2.mermaid) - Component layout showing Go CLI, Docker services, and data stores
+- **Data Flow**: [data-flow-v2.mermaid](../../data-flow-v2.mermaid) - Sequence diagram for ingest/extract/export phases
+- **Agent Roles**: [agent-roles.mermaid](../../agent-roles.mermaid) - Conceptual agent responsibilities (implemented as Go packages)
+
 ## Summary
 
 Build a Go CLI application (aqe) that extracts relevant quotes from academic documents with Harvard-style citations. The system uses a hybrid RAG architecture: Docling-serve for document parsing, a Python wrapper for hierarchical chunking, Weaviate with local Ollama embeddings for hybrid search, and Claude Code CLI for relevance scoring. SQLite stores verbatim chunk text as the authoritative source, ensuring zero citation hallucination.
@@ -97,6 +103,7 @@ internal/
 │   ├── ingest.go        # aqe ingest command
 │   ├── extract.go       # aqe extract command
 │   ├── export.go        # aqe export command
+│   ├── list.go          # aqe list command
 │   └── meta.go          # aqe meta fix command
 ├── docling/             # Docling HTTP client
 │   ├── client.go        # HTTP client for docling-serve
