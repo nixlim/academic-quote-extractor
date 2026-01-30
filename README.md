@@ -149,12 +149,41 @@ Structured output with quotes, references, relevance scores, and document metada
 ### BibTeX
 Standard BibTeX bibliography entries for all cited sources.
 
-## Prerequisites
+## Requirements
 
-- **Go** 1.25+ (with CGO enabled for SQLite)
-- **Docker** and Docker Compose
-- **Python 3** with `docling` and `docling-core` packages
-- **Claude CLI** (`claude` command available in PATH)
+### Account
+
+- **Claude Code** -- You need an active [Claude Code](https://claude.ai/code) subscription. AQE calls the `claude` CLI during the extraction phase to score quote relevance. Without it, ingestion and search still work, but extraction will fail.
+
+### Software
+
+| Requirement | Version | What it does | Install |
+|---|---|---|---|
+| **Go** | 1.25+ | Builds and runs the CLI. CGO must be enabled (`CGO_ENABLED=1`) because SQLite uses a C driver. | [go.dev/dl](https://go.dev/dl/) |
+| **Docker** | 20.10+ | Runs Docling, Weaviate, and Ollama as containers. | [docs.docker.com](https://docs.docker.com/get-docker/) |
+| **Docker Compose** | 2.0+ | Orchestrates the three services from the included `docker-compose.yml`. | Included with Docker Desktop, or install the plugin separately. |
+| **Python 3** | 3.9+ | Runs the chunking script (`scripts/chunk_helper.py`) that splits documents into hierarchical chunks. | [python.org](https://www.python.org/downloads/) |
+| **Claude CLI** | Latest | Scores candidate chunks for relevance during extraction. Must be authenticated and available in your PATH. | `npm install -g @anthropic-ai/claude-code` |
+
+### Python packages
+
+The chunker requires two packages from the Docling project:
+
+```bash
+pip3 install "docling>=2.70.0" "docling-core>=2.0.0"
+```
+
+### Verify your setup
+
+```bash
+go version                  # go1.25 or later
+docker --version            # 20.10 or later
+docker compose version      # 2.0 or later
+python3 --version           # 3.9 or later
+claude --version            # any recent version
+```
+
+All five commands should succeed before you proceed to [User Quickstart](USERS_QUICKSTART.md).
 
 ## Project Structure
 
