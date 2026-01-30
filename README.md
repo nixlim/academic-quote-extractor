@@ -1,6 +1,6 @@
 __[WARNING]__
 # THIS IS EXPERIMENTAL SOFTWARE
-I wrangled this tool with AI because reading Curturally Response Computing for my course, in full, would be too painful. Literally. My brain would melt. It is a quarter knowledge with verbose ages old human pain as a remainder. I don't have space for all the violins in my head.
+I wrangled this tool with AI because reading Curturally Responsive Computing for my course, in full, would be too painful. Literally. My brain would melt. It is a quarter knowledge with verbose ages old human pain as a remainder. I don't have space for all the violins in my head.
 
 `aqe` turned out quite useful so far, though, and gave me ideas on how to scale this. It is agent use friendly ;) Just like any CLI.
 
