@@ -53,5 +53,9 @@ coverage.html
 dist/
 build/
 
+# Test/output data
+files/
+output/
+
 # OpenCode
 .opencode/.DS_Store
