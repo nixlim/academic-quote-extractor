@@ -216,31 +216,14 @@ cmd := exec.CommandContext(ctx, "claude",
 - **Plan**: `specs/001-quote-extractor-cli/plan.md`
 - **Tasks**: `specs/001-quote-extractor-cli/tasks.md`
 - **Constitution**: `.specify/memory/constitution.md`
-- **Architecture**: `architecture-v2.mermaid`, `data-flow-v2.mermaid`
+- **Architecture (design)**: `architecture-v2.mermaid`, `data-flow-v2.mermaid`
+- **Architecture (as-built)**: `implementation-architecture.mermaid`, `implemented-flow.mermaid`
+- **Status**: `STATUS.md`
 
-**CRITICAL RULES**
+## Project Status
 
-Once implementation has commenced it has to be completed to the end. Leave no ticket unfinished!
-
-Test your own work - run the program, test it with pdf file present in directory:
-Culturally-Responsive-Computing-An-Introduction-into-Computer-Science-Security-and-Technology-Updated-122024-1735660702.pdf
-
-And processed file:
-output/Culturally-Responsive-Computing-An-Introduction-into-Computer-Science-Security-and-Technology-Updated-122024-1735660702.md
-
-Research Findings - Claude CLI --output-format json:
-When using claude --print --output-format json -p "<prompt>", the output is a JSON envelope:
-{
-  type: result,
-  subtype: success,
-  is_error: false,
-  duration_ms: 1815,
-  num_turns: 1,
-  result: {"selected_chunks": []},   // <-- STRING, not object
-  session_id: ...,
-  total_cost_usd: 0.04,
-  usage: {...}
-}
+**All 138 tasks complete.** The project is fully implemented and validated.
+See `STATUS.md` for known limitations, technical debt, and test coverage gaps.
 
 ## KNOWLEDGE AND CODEBASE INSIGHTS
 
@@ -257,7 +240,11 @@ When using claude --print --output-format json -p "<prompt>", the output is a JS
   total_cost_usd: 0.04,
   usage: {...}
 }
-Key insight: The result field is a string containing the actual response text. When we ask Claude to return JSON, the inner JSON is string-escaped inside result. The current code tries json.Unmarshal on the whole envelope as ExtractionResponse, fails, then extractJSON grabs the outermost {...} which is the envelope itself — not the inner content.
+Key insight: The result field is a string containing the actual response text. When we ask Claude to return JSON, the inner JSON is string-escaped inside result. The current code tries json.Unmarshal on the whole envelope as ExtractionResponse, fails, then extractJSON grabs the outermost {...} which is the envelope itself -- not the inner content.
+
+**CRITICAL RULES**
+
+Test your own work - run the program, test it with pdf files present in `input/` directory.
 
 ## Landing the Plane (Session Completion)
 

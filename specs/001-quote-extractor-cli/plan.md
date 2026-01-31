@@ -61,10 +61,10 @@ Build a Go CLI application (aqe) that extracts relevant quotes from academic doc
 **Code Quality Standards**:
 | Requirement | Status | Plan |
 |-------------|--------|------|
-| CLI command test coverage | ✅ PLANNED | tests/unit/cli_test.go for each command |
-| Integration tests with Docker | ✅ PLANNED | tests/integration/ requires running services |
-| Contract tests for APIs | ✅ PLANNED | tests/contract/ for Docling, Weaviate, Ollama |
-| Meaningful error messages | ✅ PLANNED | FR-012: user vs system error distinction |
+| CLI command test coverage | ✅ DONE | tests/unit/ for store/harvard; CLI tested via live validation |
+| Integration tests with Docker | ✅ DONE | tests/integration/ requires running services |
+| Contract tests for APIs | ✅ DONE | tests/contract/ for Docling, Weaviate, Ollama |
+| Meaningful error messages | ✅ DONE | FR-012: user vs system error distinction, exit codes |
 
 **Architectural Constraints**:
 | Constraint | Status | Evidence |

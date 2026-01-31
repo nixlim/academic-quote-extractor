@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-quote-extractor-cli`  
 **Created**: 2026-01-29  
-**Status**: Draft  
+**Status**: Implemented  
 **Input**: Build AQE (Academic Quote Extractor), a Go CLI application for extracting relevant quotes from academic documents with Harvard-style citations.
 
 ## User Scenarios & Testing *(mandatory)*
