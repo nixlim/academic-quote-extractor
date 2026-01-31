@@ -322,7 +322,7 @@ func checkWeaviateStats(ctx context.Context) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// Get node info with shard details
-	resp, err := client.Get("http://localhost:8080/v1/nodes")
+	resp, err := client.Get("http://localhost:8080/v1/nodes?output=verbose")
 	if err != nil {
 		fmt.Printf("  Unreachable: %v\n", err)
 		return

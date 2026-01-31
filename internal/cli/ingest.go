@@ -340,7 +340,7 @@ func textItemsToChunks(doc *docling.DoclingDocument, docID int64) []*models.Chun
 		}
 
 		chunk := &models.Chunk{
-			ID:         fmt.Sprintf("#/texts/%d", i),
+			ID:         fmt.Sprintf("doc%d:#/texts/%d", docID, i),
 			DocumentID: docID,
 			Text:       item.Text,
 		}
@@ -373,7 +373,7 @@ func chunkOutputsToChunks(outputs []chunker.ChunkOutput, docID int64) []*models.
 
 	for i, out := range outputs {
 		chunk := &models.Chunk{
-			ID:          out.ID,
+			ID:          fmt.Sprintf("doc%d:%s", docID, out.ID),
 			DocumentID:  docID,
 			Text:        out.Text,
 			PageNum:     out.PageNum,

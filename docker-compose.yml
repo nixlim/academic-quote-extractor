@@ -7,9 +7,13 @@ services:
     container_name: docling
     ports:
       - "5001:5001"
+    deploy:
+      resources:
+        limits:
+          memory: 16g
     environment:
-      - DOCLING_SERVE_CONCURRENCY=2
-      - DOCLING_SERVE_MAX_SYNC_WAIT=600
+      - DOCLING_SERVE_CONCURRENCY=1
+      - DOCLING_SERVE_MAX_SYNC_WAIT=1800
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 30s

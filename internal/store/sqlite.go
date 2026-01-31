@@ -458,6 +458,55 @@ func (s *Store) GetChunksByIDs(ids []string) ([]*models.Chunk, error) {
 	return chunks, nil
 }
 
+// GetChunksByDocumentID returns all chunks for a given document ID
+func (s *Store) GetChunksByDocumentID(documentID int64) ([]*models.Chunk, error) {
+	rows, err := s.db.Query(`
+		SELECT id, document_id, text, page_num, section_path, bbox, embedding_id
+		FROM chunks WHERE document_id = ? ORDER BY id`, documentID)
+	if err != nil {
+		return nil, fmt.Errorf("query chunks: %w", err)
+	}
+	defer rows.Close()
+
+	var chunks []*models.Chunk
+	for rows.Next() {
+		chunk := &models.Chunk{}
+		var sectionPathJSON, bboxJSON sql.NullString
+		var pageNum sql.NullInt64
+		var embeddingID sql.NullString
+
+		err := rows.Scan(
+			&chunk.ID, &chunk.DocumentID, &chunk.Text, &pageNum,
+			&sectionPathJSON, &bboxJSON, &embeddingID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan chunk: %w", err)
+		}
+
+		if pageNum.Valid {
+			pn := int(pageNum.Int64)
+			chunk.PageNum = &pn
+		}
+		if sectionPathJSON.Valid {
+			if err := chunk.UnmarshalSectionPath(sectionPathJSON.String); err != nil {
+				return nil, fmt.Errorf("unmarshal section path: %w", err)
+			}
+		}
+		if bboxJSON.Valid {
+			if err := chunk.UnmarshalBBox(bboxJSON.String); err != nil {
+				return nil, fmt.Errorf("unmarshal bbox: %w", err)
+			}
+		}
+		if embeddingID.Valid {
+			chunk.EmbeddingID = &embeddingID.String
+		}
+
+		chunks = append(chunks, chunk)
+	}
+
+	return chunks, nil
+}
+
 // InsertExtraction inserts a new extraction and returns its ID
 func (s *Store) InsertExtraction(extraction *models.Extraction) (int64, error) {
 	result, err := s.db.Exec(`

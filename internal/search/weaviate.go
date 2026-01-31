@@ -112,6 +112,60 @@ func (w *WeaviateClient) InsertChunk(ctx context.Context, chunkID string, docume
 	return result.Object.ID.String(), nil
 }
 
+// DeleteSchema drops the Chunk class entirely from Weaviate
+func (w *WeaviateClient) DeleteSchema(ctx context.Context) error {
+	err := w.client.Schema().ClassDeleter().
+		WithClassName(ChunkClassName).
+		Do(ctx)
+	if err != nil {
+		return fmt.Errorf("delete chunk class: %w", err)
+	}
+
+	if w.debug {
+		fmt.Printf("[DEBUG] Weaviate class %s deleted\n", ChunkClassName)
+	}
+
+	return nil
+}
+
+// GetObjectCount returns the number of objects in the Chunk class
+func (w *WeaviateClient) GetObjectCount(ctx context.Context) (int, error) {
+	result, err := w.client.GraphQL().Aggregate().
+		WithClassName(ChunkClassName).
+		WithFields(graphql.Field{Name: "meta", Fields: []graphql.Field{{Name: "count"}}}).
+		Do(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("aggregate count: %w", err)
+	}
+
+	if result.Data == nil {
+		return 0, nil
+	}
+
+	aggData, ok := result.Data["Aggregate"].(map[string]interface{})
+	if !ok {
+		return 0, nil
+	}
+	chunkData, ok := aggData[ChunkClassName].([]interface{})
+	if !ok || len(chunkData) == 0 {
+		return 0, nil
+	}
+	meta, ok := chunkData[0].(map[string]interface{})
+	if !ok {
+		return 0, nil
+	}
+	metaField, ok := meta["meta"].(map[string]interface{})
+	if !ok {
+		return 0, nil
+	}
+	count, ok := metaField["count"].(float64)
+	if !ok {
+		return 0, nil
+	}
+
+	return int(count), nil
+}
+
 // DeleteByDocumentID removes all chunks for a given document ID
 func (w *WeaviateClient) DeleteByDocumentID(ctx context.Context, documentID int64) error {
 	where := filters.Where().
