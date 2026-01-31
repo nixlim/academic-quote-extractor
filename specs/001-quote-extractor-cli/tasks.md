@@ -403,25 +403,25 @@
 
 - [X] T128 Implement exit codes: 0 success, 1 user error, 2 system error across all commands
 
-- [ ] T129 Validate quickstart.md scenarios 1-3 (ingestion) - includes SC-008 usability check
+- [X] T129 Validate quickstart.md scenarios 1-3 (ingestion) - includes SC-008 usability check
 
-- [ ] T130 Validate quickstart.md scenarios 4-5 (extraction)
+- [X] T130 Validate quickstart.md scenarios 4-5 (extraction)
 
-- [ ] T131 Validate quickstart.md scenarios 6-8 (export)
+- [X] T131 Validate quickstart.md scenarios 6-8 (export)
 
-- [ ] T132 Validate quickstart.md scenario 9 (metadata fix)
+- [X] T132 Validate quickstart.md scenario 9 (metadata fix)
 
-- [ ] T133 Validate quickstart.md scenario 10 (error handling)
+- [X] T133 Validate quickstart.md scenario 10 (error handling)
 
-- [ ] T134 Verify SC-003: all output quotes match verbatim source text (zero hallucination)
+- [X] T134 Verify SC-003: all output quotes match verbatim source text (zero hallucination)
 
-- [ ] T135 Verify SC-004: Harvard references pass manual verification (author format, year, page, punctuation)
+- [X] T135 Verify SC-004: Harvard references pass manual verification (author format, year, page, punctuation)
 
-- [ ] T136 Verify FR-006b: Formatter interface supports adding new citation styles (extensibility check)
+- [X] T136 Verify FR-006b: Formatter interface supports adding new citation styles (extensibility check)
 
-- [ ] T137 Performance test: ingest 100-page PDF in <60 seconds on standard hardware (SC-001) - baseline: Apple M1/M2 or equivalent
+- [X] T137 Performance test: ingest 100-page PDF in <60 seconds on standard hardware (SC-001) - baseline: Apple M1/M2 or equivalent
 
-- [ ] T138 Performance test: extract from 10 documents in <10 seconds with warm cache (SC-002)
+- [X] T138 Performance test: extract from 10 documents in <10 seconds with warm cache (SC-002)
 
 ---
 

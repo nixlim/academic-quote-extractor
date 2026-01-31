@@ -105,6 +105,17 @@ func runIngest(cmd *cobra.Command, args []string) error {
 
 	// Create Weaviate schema if needed
 	if err := weaviateClient.CreateSchema(ctx); err != nil {
+		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") {
+			fmt.Fprintln(os.Stderr, "Error: Search service unavailable")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "The Weaviate service is not responding at localhost:8080.")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "To fix:")
+			fmt.Fprintln(os.Stderr, "  1. Check if Docker is running: docker ps")
+			fmt.Fprintln(os.Stderr, "  2. Start services: docker-compose up -d")
+			fmt.Fprintln(os.Stderr, "  3. Wait for Weaviate to be ready: curl http://localhost:8080/v1/.well-known/ready")
+			os.Exit(ExitSysError)
+		}
 		return fmt.Errorf("create weaviate schema: %w", err)
 	}
 
