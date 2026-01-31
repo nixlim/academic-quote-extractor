@@ -48,7 +48,7 @@ func init() {
 
 	extractCmd.Flags().IntVar(&maxQuotes, "max-quotes", 20, "Maximum number of quotes to return")
 	extractCmd.Flags().IntVar(&minRelevance, "min-relevance", 60, "Minimum relevance score (0-100)")
-	extractCmd.Flags().IntVar(&candidateLimit, "candidates", 100, "Number of candidate chunks to retrieve for LLM scoring")
+	extractCmd.Flags().IntVar(&candidateLimit, "candidates", 30, "Number of candidate chunks to retrieve for LLM scoring")
 }
 
 func runExtract(cmd *cobra.Command, args []string) error {

@@ -5,7 +5,7 @@ Instructions for AI coding agents operating in this repository.
 ## Project Overview
 
 Go CLI application (`aqe`) for extracting quotes from academic documents with Harvard citations.
-Uses hybrid RAG: Docling for parsing, Weaviate for search, Claude CLI for relevance scoring.
+Uses hybrid RAG: local Docling (Python subprocess) for parsing, Weaviate for search, Claude CLI for relevance scoring.
 
 ## Build & Run Commands
 
@@ -60,14 +60,25 @@ go vet ./...
 go fmt ./... && go vet ./... && go test ./...
 ```
 
-## Docker Services
+## Python Pipeline Setup
 
 ```bash
-# Start all services
+# Install Python dependencies for local Docling parsing
+pip install -r scripts/requirements.txt
+
+# Test the pipeline
+python scripts/process_document.py --file input/sample.pdf --debug
+```
+
+## Docker Services
+
+Weaviate and Ollama run in Docker. Docling runs locally as a Python subprocess.
+
+```bash
+# Start Docker services (Weaviate + Ollama only)
 docker-compose up -d
 
 # Check service health
-curl http://localhost:5001/health  # Docling
 curl http://localhost:8080/v1/.well-known/ready  # Weaviate
 
 # Pull embedding model (first time setup)
@@ -171,7 +182,7 @@ func TestFormatInText(t *testing.T) {
 2. **Hybrid RAG**: Weaviate for BM25+vector search. LLM only for scoring/explanations.
 3. **Single Purpose**: Quote extraction with citations. No clustering/mapping features.
 4. **Go-First**: All core logic in Go. Python only in `scripts/` for Docling wrapper.
-5. **Docker Services**: Weaviate, Docling, Ollama in Docker. SQLite embedded.
+5. **Service Architecture**: Weaviate and Ollama in Docker. Docling runs as local Python subprocess. SQLite embedded.
 
 ### Package Structure
 
@@ -179,14 +190,14 @@ func TestFormatInText(t *testing.T) {
 cmd/aqe/          # CLI entry point only
 internal/         # All application logic
   cli/            # Cobra commands
-  docling/        # HTTP client for docling-serve
-  chunker/        # Python wrapper for HierarchicalChunker
+  docling/        # Local Python subprocess wrapper (processor.go)
+  chunker/        # Legacy Python wrapper (deprecated)
   claude/         # Claude CLI wrapper
   search/         # Weaviate client
   store/          # SQLite operations
   harvard/        # Reference formatting (pure Go)
   models/         # Domain types
-scripts/          # Python chunking script only
+scripts/          # Python pipeline (process_document.py + lib/)
 tests/            # contract/, integration/, unit/
 ```
 
@@ -226,6 +237,11 @@ cmd := exec.CommandContext(ctx, "claude",
 See `STATUS.md` for known limitations, technical debt, and test coverage gaps.
 
 ## KNOWLEDGE AND CODEBASE INSIGHTS
+
+### Research Findings - Chunking Pipeline:
+The local Docling pipeline (`scripts/process_document.py`) uses HybridChunker with 800-token max and
+200-word overlap between adjacent chunks. Position tracking enables adjacent context lookup during
+extraction. Default `--candidates 30` works well with ~800-token chunks; higher values risk OOM in Claude CLI.
 
 ### Research Findings - Claude CLI --output-format json:
 When using claude --print --output-format json -p "<prompt>", the output is a JSON envelope:
