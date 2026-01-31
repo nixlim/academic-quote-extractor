@@ -1,5 +1,9 @@
 package docling
 
+// Deprecated: This file contains the HTTP client for dockerized docling-serve.
+// It has been replaced by processor.go which uses local Python subprocess.
+// Kept for reference and potential future use. See constitution v1.1.0.
+
 import (
 	"bytes"
 	"context"
@@ -13,7 +17,8 @@ import (
 	"time"
 )
 
-// Client provides HTTP access to docling-serve
+// Client provides HTTP access to docling-serve.
+// Deprecated: Use Processor instead for local document processing.
 type Client struct {
 	baseURL    string
 	httpClient *http.Client

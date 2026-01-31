@@ -19,8 +19,9 @@ import (
 
 var (
 	// Extract flags
-	maxQuotes    int
-	minRelevance int
+	maxQuotes      int
+	minRelevance   int
+	candidateLimit int
 )
 
 // extractCmd represents the extract command
@@ -47,6 +48,7 @@ func init() {
 
 	extractCmd.Flags().IntVar(&maxQuotes, "max-quotes", 20, "Maximum number of quotes to return")
 	extractCmd.Flags().IntVar(&minRelevance, "min-relevance", 60, "Minimum relevance score (0-100)")
+	extractCmd.Flags().IntVar(&candidateLimit, "candidates", 100, "Number of candidate chunks to retrieve for LLM scoring")
 }
 
 func runExtract(cmd *cobra.Command, args []string) error {
@@ -81,13 +83,13 @@ func runExtract(cmd *cobra.Command, args []string) error {
 		weaviateClient.SetDebug(true)
 	}
 
-	// Perform hybrid search - get more candidates than we need for LLM filtering
-	candidateLimit := 50
-	if maxQuotes > 25 {
-		candidateLimit = maxQuotes * 2
+	// Perform hybrid search - use configured candidate limit
+	searchLimit := candidateLimit
+	if maxQuotes > searchLimit/2 {
+		searchLimit = maxQuotes * 2 // Ensure we get enough candidates
 	}
 
-	results, err := weaviateClient.HybridSearch(ctx, topic, candidateLimit, 0.5)
+	results, err := weaviateClient.HybridSearch(ctx, topic, searchLimit, 0.5)
 	if err != nil {
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") {
 			fmt.Fprintln(os.Stderr, "Error: Search service unavailable")
@@ -114,16 +116,32 @@ func runExtract(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Found %d candidate chunks\n", len(results))
 	fmt.Println("Scoring relevance with Claude...")
 
-	// Build chunk inputs for Claude
+	// Build chunk inputs for Claude with adjacent context
 	chunkInputs := make([]claude.ChunkInput, len(results))
 	for i, r := range results {
-		chunkInputs[i] = claude.ChunkInput{
+		input := claude.ChunkInput{
 			ID:          r.ChunkID,
 			Text:        r.Text,
 			PageNum:     r.PageNum,
 			SectionPath: r.SectionPath,
 			DocumentID:  r.DocumentID,
 		}
+
+		// Fetch adjacent chunks for context (if position data available)
+		chunk, err := db.GetChunkByID(r.ChunkID)
+		if err == nil && chunk != nil && chunk.Position != nil {
+			adj, err := db.GetAdjacentChunks(chunk.ID, chunk.DocumentID, *chunk.Position)
+			if err == nil && adj != nil {
+				if adj.Prev != nil {
+					input.PrevContext = truncateContext(adj.Prev.Text, 200)
+				}
+				if adj.Next != nil {
+					input.NextContext = truncateContext(adj.Next.Text, 200)
+				}
+			}
+		}
+
+		chunkInputs[i] = input
 	}
 
 	// Call Claude for relevance scoring
@@ -289,6 +307,15 @@ func saveExtraction(db *store.Store, topic string, chunks []claude.SelectedChunk
 	}
 
 	return extractionID, nil
+}
+
+// truncateContext truncates text to approximately maxWords words for use as context
+func truncateContext(text string, maxWords int) string {
+	words := strings.Fields(text)
+	if len(words) <= maxWords {
+		return text
+	}
+	return strings.Join(words[:maxWords], " ") + "..."
 }
 
 func buildReference(cwd *ChunkWithDocument) harvard.Reference {

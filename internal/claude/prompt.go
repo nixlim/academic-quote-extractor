@@ -21,6 +21,7 @@ IMPORTANT RULES:
 - Only select chunks that are genuinely relevant to the topic (score >= 60)
 - The relevance score should reflect how directly useful the quote would be for academic writing
 - Your explanation should be concise (1-2 sentences) and help the researcher understand the quote's value
+- CONTEXT sections (marked [PREV CONTEXT] and [NEXT CONTEXT]) are provided for understanding only — do NOT select or quote from context sections
 - Return ONLY the JSON response, no other text
 
 CANDIDATE CHUNKS:
@@ -29,8 +30,10 @@ CANDIDATE CHUNKS:
 ID: {{.ID}}
 Document: {{.DocumentID}}{{if .PageNum}}
 Page: {{.PageNum}}{{end}}{{if .SectionPath}}
-Section: {{range $i, $s := .SectionPath}}{{if $i}} > {{end}}{{$s}}{{end}}{{end}}
-Text: {{.Text}}
+Section: {{range $i, $s := .SectionPath}}{{if $i}} > {{end}}{{$s}}{{end}}{{end}}{{if .PrevContext}}
+[PREV CONTEXT]: {{.PrevContext}}{{end}}
+Text: {{.Text}}{{if .NextContext}}
+[NEXT CONTEXT]: {{.NextContext}}{{end}}
 ---
 {{end}}
 

@@ -22,13 +22,14 @@ CREATE TABLE IF NOT EXISTS documents (
 
 -- Chunks table (source of truth for verbatim text)
 CREATE TABLE IF NOT EXISTS chunks (
-    id TEXT PRIMARY KEY,  -- Docling self_ref e.g., "#/texts/42"
+    id TEXT PRIMARY KEY,  -- Docling self_ref e.g., "#/chunks/0"
     document_id INTEGER NOT NULL,
     text TEXT NOT NULL,
     page_num INTEGER,
     section_path TEXT,  -- JSON array: ["Chapter 1", "Section 1.2"]
     bbox TEXT,  -- JSON object: {"l":0,"t":0,"r":100,"b":50}
     embedding_id TEXT,  -- Weaviate UUID
+    position INTEGER,  -- Sequential order within document (0-based), used for adjacency queries
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
 
@@ -57,3 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_quotes_extraction ON extracted_quotes(extraction_
 CREATE INDEX IF NOT EXISTS idx_quotes_chunk ON extracted_quotes(chunk_id);
 CREATE INDEX IF NOT EXISTS idx_documents_checksum ON documents(checksum);
 `
+
+// migrationV2AddColumn adds the position column to existing databases
+const migrationV2AddColumn = `ALTER TABLE chunks ADD COLUMN position INTEGER;`
+
+// migrationV2Index creates the position index (safe to re-run via IF NOT EXISTS)
+const migrationV2Index = `CREATE INDEX IF NOT EXISTS idx_chunks_position ON chunks(document_id, position);`

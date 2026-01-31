@@ -16,13 +16,14 @@ type BBox struct {
 // Chunk represents a segment of text from a document.
 // The Text field is the source of truth for verbatim quotes.
 type Chunk struct {
-	ID          string   `db:"id"` // Docling self_ref e.g., "#/texts/42"
+	ID          string   `db:"id"` // Docling chunk ref e.g., "doc1:#/chunks/0"
 	DocumentID  int64    `db:"document_id"`
 	Text        string   `db:"text"` // Verbatim text - SOURCE OF TRUTH
 	PageNum     *int     `db:"page_num"`
 	SectionPath []string // Stored as JSON in section_path column
 	BBox        *BBox    // Stored as JSON in bbox column
 	EmbeddingID *string  `db:"embedding_id"` // Weaviate UUID
+	Position    *int     `db:"position"`     // Sequential order within document (0-based)
 }
 
 // MarshalSectionPath converts SectionPath to JSON for database storage

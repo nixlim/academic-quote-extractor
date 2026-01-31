@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/foundry-zero/aqe/internal/chunker"
 	"github.com/foundry-zero/aqe/internal/docling"
 	"github.com/foundry-zero/aqe/internal/models"
 	"github.com/foundry-zero/aqe/internal/search"
@@ -32,8 +30,8 @@ var ingestCmd = &cobra.Command{
 	Long: `Ingest academic documents (PDF, DOCX, TXT) for quote extraction.
 
 The command will:
-1. Parse document content using Docling
-2. Split into semantic chunks
+1. Parse document content using local Docling
+2. Split into semantic chunks with HybridChunker
 3. Generate embeddings via Ollama
 4. Store in SQLite and Weaviate for retrieval
 
@@ -68,22 +66,38 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Initialize services
-	doclingClient := docling.NewClient("http://localhost:5001")
+	// Initialize local Docling processor
+	scriptPath := filepath.Join(getScriptsDir(), "process_document.py")
+	processorOpts := []docling.ProcessorOption{
+		docling.WithMaxTokens(800),
+		docling.WithOverlap(200),
+	}
 	if IsDebug() {
-		doclingClient.SetDebug(true)
+		processorOpts = append(processorOpts, docling.WithProcessorDebug(true))
 	}
 
-	// Check Docling health
-	if err := doclingClient.Health(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "Error: Document parsing service unavailable")
+	processor, err := docling.NewProcessor(scriptPath, processorOpts...)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error: Document processing pipeline unavailable")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "The Docling service is not responding at localhost:5001.")
+		fmt.Fprintln(os.Stderr, "Could not initialize the local Docling processor.")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "To fix:")
-		fmt.Fprintln(os.Stderr, "  1. Check if Docker is running: docker ps")
-		fmt.Fprintln(os.Stderr, "  2. Start services: docker-compose up -d")
-		fmt.Fprintln(os.Stderr, "  3. Wait for Docling to be ready: curl http://localhost:5001/health")
+		fmt.Fprintln(os.Stderr, "  1. Ensure Python 3 is installed: python3 --version")
+		fmt.Fprintln(os.Stderr, "  2. Install dependencies: pip install -r scripts/requirements.txt")
+		fmt.Fprintf(os.Stderr, "\nDetails: %v\n", err)
+		os.Exit(ExitSysError)
+	}
+
+	// Check Python dependencies
+	if err := processor.CheckDependencies(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "Error: Missing Python dependencies")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Required Python packages are not installed.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "To fix:")
+		fmt.Fprintln(os.Stderr, "  pip install -r scripts/requirements.txt")
+		fmt.Fprintf(os.Stderr, "\nDetails: %v\n", err)
 		os.Exit(ExitSysError)
 	}
 
@@ -119,15 +133,6 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create weaviate schema: %w", err)
 	}
 
-	// Initialize chunker
-	scriptPath := filepath.Join(getScriptsDir(), "chunk_helper.py")
-	chunkerInstance, err := chunker.NewChunker(scriptPath)
-	if err != nil {
-		Debugf("Chunker init failed: %v", err)
-		// Continue without chunking for now - we'll use text items directly
-		chunkerInstance = nil
-	}
-
 	// Check for already ingested files (batch resume)
 	db := GetStore()
 	alreadyIngested := 0
@@ -149,7 +154,7 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	// Process each file
 	var totalDocs, totalChunks int
 	for _, file := range files {
-		docs, chunks, err := processFile(ctx, file, db, doclingClient, weaviateClient, chunkerInstance)
+		docs, chunks, err := processFile(ctx, file, db, processor, weaviateClient)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: %s - %v\n", filepath.Base(file), err)
 			continue
@@ -164,7 +169,7 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func processFile(ctx context.Context, filePath string, db *store.Store, doclingClient *docling.Client, weaviateClient *search.WeaviateClient, chunkerInstance *chunker.Chunker) (int, int, error) {
+func processFile(ctx context.Context, filePath string, db *store.Store, processor *docling.Processor, weaviateClient *search.WeaviateClient) (int, int, error) {
 	filename := filepath.Base(filePath)
 	fmt.Printf("Processing: %s\n", filename)
 
@@ -184,10 +189,11 @@ func processFile(ctx context.Context, filePath string, db *store.Store, doclingC
 		return 0, 0, nil
 	}
 
-	// Parse document with Docling
-	doclingDoc, err := doclingClient.ConvertFile(ctx, filePath)
+	// Process document with local Docling pipeline (parse + chunk + overlap)
+	fmt.Printf("  Parsing and chunking...\n")
+	chunkResults, err := processor.ProcessFile(ctx, filePath)
 	if err != nil {
-		return 0, 0, fmt.Errorf("parse document: %w", err)
+		return 0, 0, fmt.Errorf("process document: %w", err)
 	}
 
 	// Extract metadata
@@ -200,28 +206,20 @@ func processFile(ctx context.Context, filePath string, db *store.Store, doclingC
 		IngestedAt: time.Now(),
 	}
 
-	// Apply CLI overrides or use detected metadata
+	// Apply CLI overrides
 	if ingestTitle != "" {
 		doc.Title = &ingestTitle
-	} else if doclingDoc.Name != "" {
-		doc.Title = &doclingDoc.Name
 	}
-
 	if ingestAuthor != "" {
 		doc.Authors = []string{ingestAuthor}
 	}
-
 	if ingestYear > 0 {
 		doc.Year = &ingestYear
 	}
 
 	// Log metadata
 	if doc.Title != nil {
-		if ingestTitle != "" || ingestAuthor != "" || ingestYear > 0 {
-			fmt.Printf("  Using provided metadata: %q", *doc.Title)
-		} else {
-			fmt.Printf("  Detected: %q", *doc.Title)
-		}
+		fmt.Printf("  Title: %q", *doc.Title)
 		if len(doc.Authors) > 0 {
 			fmt.Printf(" by %s", strings.Join(doc.Authors, ", "))
 		}
@@ -238,28 +236,8 @@ func processFile(ctx context.Context, filePath string, db *store.Store, doclingC
 	}
 	doc.ID = docID
 
-	// Generate chunks
-	var chunks []*models.Chunk
-
-	if chunkerInstance != nil {
-		// Use Python chunker
-		docJSON, err := json.Marshal(doclingDoc)
-		if err != nil {
-			return 0, 0, fmt.Errorf("marshal document: %w", err)
-		}
-
-		chunkOutputs, err := chunkerInstance.ChunkDocument(ctx, docJSON)
-		if err != nil {
-			Debugf("Chunker failed, falling back to text items: %v", err)
-			// Fall back to text items
-			chunks = textItemsToChunks(doclingDoc, docID)
-		} else {
-			chunks = chunkOutputsToChunks(chunkOutputs, docID)
-		}
-	} else {
-		// Fall back to using text items directly
-		chunks = textItemsToChunks(doclingDoc, docID)
-	}
+	// Convert ChunkResults to model Chunks with position
+	chunks := chunkResultsToChunks(chunkResults, docID)
 
 	if len(chunks) == 0 {
 		fmt.Printf("  Warning: No chunks extracted\n")
@@ -342,62 +320,28 @@ func detectSourceType(filename string) models.SourceType {
 	}
 }
 
-func textItemsToChunks(doc *docling.DoclingDocument, docID int64) []*models.Chunk {
-	var chunks []*models.Chunk
+// chunkResultsToChunks converts Processor output to model Chunks with position set
+func chunkResultsToChunks(results []docling.ChunkResult, docID int64) []*models.Chunk {
+	chunks := make([]*models.Chunk, len(results))
 
-	for i, item := range doc.Texts {
-		if item.Text == "" {
-			continue
-		}
-
+	for i, r := range results {
+		pos := i
 		chunk := &models.Chunk{
-			ID:         fmt.Sprintf("doc%d:#/texts/%d", docID, i),
-			DocumentID: docID,
-			Text:       item.Text,
-		}
-
-		// Extract page number
-		if len(item.Prov) > 0 {
-			pn := item.Prov[0].PageNo
-			chunk.PageNum = &pn
-
-			// Extract bbox
-			if item.Prov[0].BBox != nil {
-				chunk.BBox = &models.BBox{
-					L:           item.Prov[0].BBox.L,
-					T:           item.Prov[0].BBox.T,
-					R:           item.Prov[0].BBox.R,
-					B:           item.Prov[0].BBox.B,
-					CoordOrigin: item.Prov[0].BBox.CoordOrigin,
-				}
-			}
-		}
-
-		chunks = append(chunks, chunk)
-	}
-
-	return chunks
-}
-
-func chunkOutputsToChunks(outputs []chunker.ChunkOutput, docID int64) []*models.Chunk {
-	chunks := make([]*models.Chunk, len(outputs))
-
-	for i, out := range outputs {
-		chunk := &models.Chunk{
-			ID:          fmt.Sprintf("doc%d:%s", docID, out.ID),
+			ID:          fmt.Sprintf("doc%d:%s", docID, r.ID),
 			DocumentID:  docID,
-			Text:        out.Text,
-			PageNum:     out.PageNum,
-			SectionPath: out.SectionPath,
+			Text:        r.Text,
+			PageNum:     r.PageNum,
+			SectionPath: r.SectionPath,
+			Position:    &pos,
 		}
 
-		if out.BBox != nil {
+		if r.BBox != nil {
 			chunk.BBox = &models.BBox{
-				L:           out.BBox.L,
-				T:           out.BBox.T,
-				R:           out.BBox.R,
-				B:           out.BBox.B,
-				CoordOrigin: out.BBox.CoordOrigin,
+				L:           r.BBox.L,
+				T:           r.BBox.T,
+				R:           r.BBox.R,
+				B:           r.BBox.B,
+				CoordOrigin: r.BBox.CoordOrigin,
 			}
 		}
 

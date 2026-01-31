@@ -18,7 +18,7 @@ var statusCmd = &cobra.Command{
 	Short: "Show infrastructure and database status",
 	Long: `Check the health and status of all services required by aqe:
 
-  - Docling (document parsing)
+  - Docling (local Python - document parsing)
   - Weaviate (vector search)
   - Ollama (embeddings)
   - Claude CLI (LLM scoring)
@@ -90,16 +90,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 func checkServices(ctx context.Context) []serviceStatus {
 	var results []serviceStatus
 
-	// Docling
-	results = append(results, checkHTTPService("Docling", "http://localhost:5001/health", func(body []byte) string {
-		var resp struct {
-			Status string `json:"status"`
-		}
-		if json.Unmarshal(body, &resp) == nil {
-			return fmt.Sprintf("status: %s", resp.Status)
-		}
-		return ""
-	}))
+	// Docling (local Python)
+	results = append(results, checkLocalDocling())
 
 	// Weaviate
 	results = append(results, checkHTTPService("Weaviate", "http://localhost:8080/v1/.well-known/ready", func(body []byte) string {
@@ -137,6 +129,53 @@ func checkServices(ctx context.Context) []serviceStatus {
 	results = append(results, checkClaudeCLI())
 
 	return results
+}
+
+func checkLocalDocling() serviceStatus {
+	svc := serviceStatus{
+		name: "Docling",
+		url:  "local Python",
+	}
+
+	// Check Python
+	pythonPath, err := exec.LookPath("python3")
+	if err != nil {
+		pythonPath, err = exec.LookPath("python")
+		if err != nil {
+			svc.status = "DOWN"
+			svc.details = "Python 3 not found in PATH"
+			return svc
+		}
+	}
+
+	// Check Docling packages
+	start := time.Now()
+	out, err := exec.Command(pythonPath, "-c",
+		"import docling; import docling_core; import transformers; from importlib.metadata import version; print(version('docling'))").CombinedOutput()
+	svc.latency = time.Since(start)
+
+	if err != nil {
+		svc.status = "DOWN"
+		errMsg := strings.TrimSpace(string(out))
+		// Extract the last meaningful line from the traceback
+		if errMsg != "" {
+			lines := strings.Split(errMsg, "\n")
+			lastLine := lines[len(lines)-1]
+			if strings.Contains(lastLine, "ModuleNotFoundError") || strings.Contains(lastLine, "ImportError") {
+				svc.details = lastLine + "\nFix: pip install -r scripts/requirements.txt"
+			} else {
+				svc.details = lastLine
+			}
+		} else {
+			svc.details = "Missing packages. Run: pip install -r scripts/requirements.txt"
+		}
+		return svc
+	}
+
+	svc.status = "OK"
+	version := strings.TrimSpace(string(out))
+	svc.details = fmt.Sprintf("v%s (via %s)", version, pythonPath)
+	return svc
 }
 
 func checkHTTPService(name, url string, parseDetails func([]byte) string) serviceStatus {
@@ -242,7 +281,6 @@ func checkClaudeCLI() serviceStatus {
 
 func checkDocker() {
 	out, err := exec.Command("docker", "ps",
-		"--filter", "name=docling",
 		"--filter", "name=weaviate",
 		"--filter", "name=ollama",
 		"--format", "  {{.Names}}\t{{.Status}}\t{{.Ports}}",

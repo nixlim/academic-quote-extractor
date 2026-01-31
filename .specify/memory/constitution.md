@@ -1,19 +1,18 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: N/A (initial) → 1.0.0
-Modified principles: N/A (initial constitution)
-Added sections:
-  - Core Principles (5 principles)
-  - Code Quality Standards
-  - Architectural Constraints & Output Requirements
-  - Governance
+Version change: 1.0.0 → 1.1.0
+Modified principles: V. Docker-Based Services → V. Service Architecture
+Rationale: Docling-serve in Docker requires 16GB RAM and is slower than local Python
+  Docling (1.8GB, already installed). Local subprocess replaces HTTP API for parsing.
+Migration plan:
+  - Replace internal/docling HTTP client usage with local subprocess wrapper
+  - Remove Docling from docker-compose.yml
+  - Keep HTTP client code marked deprecated for reference
+  - Weaviate and Ollama remain in Docker (unchanged)
+Added sections: N/A
 Removed sections: N/A
-Templates requiring updates:
-  - .specify/templates/plan-template.md: ✅ Compatible (Constitution Check section exists)
-  - .specify/templates/spec-template.md: ✅ Compatible (no constitution-specific refs)
-  - .specify/templates/tasks-template.md: ✅ Compatible (no constitution-specific refs)
-  - .specify/templates/checklist-template.md: ✅ Compatible (no constitution-specific refs)
+Templates requiring updates: None (no principle-specific refs in templates)
 Follow-up TODOs: None
 -->
 
@@ -76,18 +75,22 @@ wrapper. Minimize external dependencies.
 **Rationale:** Go provides a single binary deployment, strong typing, and excellent
 concurrency—ideal for CLI tools and services.
 
-### V. Docker-Based Services
+### V. Service Architecture
 
-Docling-serve and Weaviate run in Docker. SQLite is embedded for persistence.
+Weaviate and Ollama run in Docker. Docling runs as a local Python subprocess.
+SQLite is embedded for persistence.
 
 **Non-negotiable rules:**
 - Weaviate MUST run as a Docker container (not embedded)
-- Docling-serve MUST run as a Docker container
+- Docling MUST run as a local Python subprocess (not Docker) for parsing and chunking
+- Ollama MUST run as a Docker container for embedding generation
 - SQLite MUST be used for persistent storage (no external database servers)
-- Docker Compose MUST be provided for local development setup
+- Docker Compose MUST be provided for Weaviate and Ollama setup
 
-**Rationale:** Docker containers isolate complex dependencies (ML models, vector DB) while
-SQLite keeps the core application simple and portable.
+**Rationale:** Weaviate and Ollama benefit from Docker isolation for their complex
+dependencies. Docling as a local subprocess uses 1.8GB RAM (vs 16GB in Docker),
+starts instantly, and avoids HTTP serialization overhead. SQLite keeps the core
+application simple and portable.
 
 ## Code Quality Standards
 
@@ -143,4 +146,4 @@ Extractor project.
 - Complexity that violates principles MUST be justified in the PR description
 - Unjustified violations MUST block merge
 
-**Version**: 1.0.0 | **Ratified**: 2026-01-29 | **Last Amended**: 2026-01-29
+**Version**: 1.1.0 | **Ratified**: 2026-01-29 | **Last Amended**: 2026-01-31

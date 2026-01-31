@@ -32,6 +32,8 @@ type ChunkInput struct {
 	PageNum     *int     `json:"page_num,omitempty"`
 	SectionPath []string `json:"section_path,omitempty"`
 	DocumentID  int64    `json:"document_id"`
+	PrevContext string   `json:"prev_context,omitempty"` // Truncated text from previous chunk (read-only context)
+	NextContext string   `json:"next_context,omitempty"` // Truncated text from next chunk (read-only context)
 }
 
 // ExtractionResponse is the expected response from Claude

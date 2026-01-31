@@ -44,13 +44,69 @@ func (s *Store) Close() error {
 	return nil
 }
 
-// RunMigrations creates the database schema
+// RunMigrations creates the database schema and applies any pending migrations
 func (s *Store) RunMigrations() error {
 	_, err := s.db.Exec(migrationSQL)
 	if err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
+
+	// Apply v2 migration (add position column) if needed
+	if err := s.migrateV2(); err != nil {
+		return fmt.Errorf("run v2 migration: %w", err)
+	}
+
 	return nil
+}
+
+// migrateV2 adds the position column to existing chunks tables and creates the index
+func (s *Store) migrateV2() error {
+	// Check if position column already exists
+	hasPosition, err := s.hasColumn("chunks", "position")
+	if err != nil {
+		return fmt.Errorf("check position column: %w", err)
+	}
+
+	if !hasPosition {
+		if _, err := s.db.Exec(migrationV2AddColumn); err != nil {
+			return fmt.Errorf("add position column: %w", err)
+		}
+	}
+
+	// Always ensure the index exists (safe with IF NOT EXISTS)
+	if _, err := s.db.Exec(migrationV2Index); err != nil {
+		return fmt.Errorf("create position index: %w", err)
+	}
+
+	return nil
+}
+
+// hasColumn checks if a table has a specific column
+func (s *Store) hasColumn(table, column string) (bool, error) {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, fmt.Errorf("check table info: %w", err)
+	}
+
+	var found bool
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull int
+		var dfltValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dfltValue, &pk); err != nil {
+			rows.Close()
+			return false, fmt.Errorf("scan column info: %w", err)
+		}
+		if name == column {
+			found = true
+			break
+		}
+	}
+	rows.Close()
+
+	return found, nil
 }
 
 // DocumentWithChunkCount is a Document with its chunk count for listing
@@ -243,10 +299,10 @@ func (s *Store) InsertChunk(chunk *models.Chunk) error {
 	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO chunks (id, document_id, text, page_num, section_path, bbox, embedding_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO chunks (id, document_id, text, page_num, section_path, bbox, embedding_id, position)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		chunk.ID, chunk.DocumentID, chunk.Text, chunk.PageNum,
-		sectionPathJSON, bboxJSON, chunk.EmbeddingID,
+		sectionPathJSON, bboxJSON, chunk.EmbeddingID, chunk.Position,
 	)
 	if err != nil {
 		return fmt.Errorf("insert chunk: %w", err)
@@ -259,8 +315,8 @@ func (s *Store) InsertChunk(chunk *models.Chunk) error {
 func (s *Store) InsertChunks(chunks []*models.Chunk) error {
 	return s.WithTx(func(tx *sql.Tx) error {
 		stmt, err := tx.Prepare(`
-			INSERT INTO chunks (id, document_id, text, page_num, section_path, bbox, embedding_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`)
+			INSERT INTO chunks (id, document_id, text, page_num, section_path, bbox, embedding_id, position)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			return fmt.Errorf("prepare statement: %w", err)
 		}
@@ -279,7 +335,7 @@ func (s *Store) InsertChunks(chunks []*models.Chunk) error {
 
 			_, err = stmt.Exec(
 				chunk.ID, chunk.DocumentID, chunk.Text, chunk.PageNum,
-				sectionPathJSON, bboxJSON, chunk.EmbeddingID,
+				sectionPathJSON, bboxJSON, chunk.EmbeddingID, chunk.Position,
 			)
 			if err != nil {
 				return fmt.Errorf("insert chunk %s: %w", chunk.ID, err)
@@ -354,17 +410,17 @@ func (s *Store) GetDocumentByID(id int64) (*models.Document, error) {
 // GetChunkByID returns a chunk by its ID
 func (s *Store) GetChunkByID(id string) (*models.Chunk, error) {
 	row := s.db.QueryRow(`
-		SELECT id, document_id, text, page_num, section_path, bbox, embedding_id
+		SELECT id, document_id, text, page_num, section_path, bbox, embedding_id, position
 		FROM chunks WHERE id = ?`, id)
 
 	chunk := &models.Chunk{}
 	var sectionPathJSON, bboxJSON sql.NullString
-	var pageNum sql.NullInt64
+	var pageNum, position sql.NullInt64
 	var embeddingID sql.NullString
 
 	err := row.Scan(
 		&chunk.ID, &chunk.DocumentID, &chunk.Text, &pageNum,
-		&sectionPathJSON, &bboxJSON, &embeddingID,
+		&sectionPathJSON, &bboxJSON, &embeddingID, &position,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -376,6 +432,10 @@ func (s *Store) GetChunkByID(id string) (*models.Chunk, error) {
 	if pageNum.Valid {
 		pn := int(pageNum.Int64)
 		chunk.PageNum = &pn
+	}
+	if position.Valid {
+		pos := int(position.Int64)
+		chunk.Position = &pos
 	}
 	if sectionPathJSON.Valid {
 		if err := chunk.UnmarshalSectionPath(sectionPathJSON.String); err != nil {
@@ -412,7 +472,7 @@ func (s *Store) GetChunksByIDs(ids []string) ([]*models.Chunk, error) {
 	}
 
 	rows, err := s.db.Query(`
-		SELECT id, document_id, text, page_num, section_path, bbox, embedding_id
+		SELECT id, document_id, text, page_num, section_path, bbox, embedding_id, position
 		FROM chunks WHERE id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query chunks: %w", err)
@@ -423,12 +483,12 @@ func (s *Store) GetChunksByIDs(ids []string) ([]*models.Chunk, error) {
 	for rows.Next() {
 		chunk := &models.Chunk{}
 		var sectionPathJSON, bboxJSON sql.NullString
-		var pageNum sql.NullInt64
+		var pageNum, position sql.NullInt64
 		var embeddingID sql.NullString
 
 		err := rows.Scan(
 			&chunk.ID, &chunk.DocumentID, &chunk.Text, &pageNum,
-			&sectionPathJSON, &bboxJSON, &embeddingID,
+			&sectionPathJSON, &bboxJSON, &embeddingID, &position,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan chunk: %w", err)
@@ -437,6 +497,10 @@ func (s *Store) GetChunksByIDs(ids []string) ([]*models.Chunk, error) {
 		if pageNum.Valid {
 			pn := int(pageNum.Int64)
 			chunk.PageNum = &pn
+		}
+		if position.Valid {
+			pos := int(position.Int64)
+			chunk.Position = &pos
 		}
 		if sectionPathJSON.Valid {
 			if err := chunk.UnmarshalSectionPath(sectionPathJSON.String); err != nil {
@@ -461,8 +525,8 @@ func (s *Store) GetChunksByIDs(ids []string) ([]*models.Chunk, error) {
 // GetChunksByDocumentID returns all chunks for a given document ID
 func (s *Store) GetChunksByDocumentID(documentID int64) ([]*models.Chunk, error) {
 	rows, err := s.db.Query(`
-		SELECT id, document_id, text, page_num, section_path, bbox, embedding_id
-		FROM chunks WHERE document_id = ? ORDER BY id`, documentID)
+		SELECT id, document_id, text, page_num, section_path, bbox, embedding_id, position
+		FROM chunks WHERE document_id = ? ORDER BY COALESCE(position, 0), id`, documentID)
 	if err != nil {
 		return nil, fmt.Errorf("query chunks: %w", err)
 	}
@@ -472,12 +536,12 @@ func (s *Store) GetChunksByDocumentID(documentID int64) ([]*models.Chunk, error)
 	for rows.Next() {
 		chunk := &models.Chunk{}
 		var sectionPathJSON, bboxJSON sql.NullString
-		var pageNum sql.NullInt64
+		var pageNum, position sql.NullInt64
 		var embeddingID sql.NullString
 
 		err := rows.Scan(
 			&chunk.ID, &chunk.DocumentID, &chunk.Text, &pageNum,
-			&sectionPathJSON, &bboxJSON, &embeddingID,
+			&sectionPathJSON, &bboxJSON, &embeddingID, &position,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan chunk: %w", err)
@@ -486,6 +550,10 @@ func (s *Store) GetChunksByDocumentID(documentID int64) ([]*models.Chunk, error)
 		if pageNum.Valid {
 			pn := int(pageNum.Int64)
 			chunk.PageNum = &pn
+		}
+		if position.Valid {
+			pos := int(position.Int64)
+			chunk.Position = &pos
 		}
 		if sectionPathJSON.Valid {
 			if err := chunk.UnmarshalSectionPath(sectionPathJSON.String); err != nil {
@@ -665,6 +733,95 @@ func (s *Store) GetDocumentsWithIncompleteMetadata() ([]*models.Document, error)
 	}
 
 	return docs, nil
+}
+
+// AdjacentChunks holds the previous and next chunks relative to a given chunk
+type AdjacentChunks struct {
+	Prev *models.Chunk
+	Next *models.Chunk
+}
+
+// GetAdjacentChunks returns the chunks immediately before and after the given chunk
+// within the same document, using the position column for ordering.
+// Returns nil for prev/next if the chunk is at the start/end of the document.
+func (s *Store) GetAdjacentChunks(chunkID string, documentID int64, position int) (*AdjacentChunks, error) {
+	result := &AdjacentChunks{}
+
+	// Get previous chunk (position - 1)
+	prevRow := s.db.QueryRow(`
+		SELECT id, document_id, text, page_num, section_path, bbox, embedding_id, position
+		FROM chunks WHERE document_id = ? AND position = ?`, documentID, position-1)
+
+	prevChunk := &models.Chunk{}
+	var prevSectionPath, prevBBox sql.NullString
+	var prevPageNum, prevPosition sql.NullInt64
+	var prevEmbeddingID sql.NullString
+
+	err := prevRow.Scan(
+		&prevChunk.ID, &prevChunk.DocumentID, &prevChunk.Text, &prevPageNum,
+		&prevSectionPath, &prevBBox, &prevEmbeddingID, &prevPosition,
+	)
+	if err == nil {
+		if prevPageNum.Valid {
+			pn := int(prevPageNum.Int64)
+			prevChunk.PageNum = &pn
+		}
+		if prevPosition.Valid {
+			pos := int(prevPosition.Int64)
+			prevChunk.Position = &pos
+		}
+		if prevSectionPath.Valid {
+			prevChunk.UnmarshalSectionPath(prevSectionPath.String)
+		}
+		if prevBBox.Valid {
+			prevChunk.UnmarshalBBox(prevBBox.String)
+		}
+		if prevEmbeddingID.Valid {
+			prevChunk.EmbeddingID = &prevEmbeddingID.String
+		}
+		result.Prev = prevChunk
+	} else if err != sql.ErrNoRows {
+		return nil, fmt.Errorf("get previous chunk: %w", err)
+	}
+
+	// Get next chunk (position + 1)
+	nextRow := s.db.QueryRow(`
+		SELECT id, document_id, text, page_num, section_path, bbox, embedding_id, position
+		FROM chunks WHERE document_id = ? AND position = ?`, documentID, position+1)
+
+	nextChunk := &models.Chunk{}
+	var nextSectionPath, nextBBox sql.NullString
+	var nextPageNum, nextPosition sql.NullInt64
+	var nextEmbeddingID sql.NullString
+
+	err = nextRow.Scan(
+		&nextChunk.ID, &nextChunk.DocumentID, &nextChunk.Text, &nextPageNum,
+		&nextSectionPath, &nextBBox, &nextEmbeddingID, &nextPosition,
+	)
+	if err == nil {
+		if nextPageNum.Valid {
+			pn := int(nextPageNum.Int64)
+			nextChunk.PageNum = &pn
+		}
+		if nextPosition.Valid {
+			pos := int(nextPosition.Int64)
+			nextChunk.Position = &pos
+		}
+		if nextSectionPath.Valid {
+			nextChunk.UnmarshalSectionPath(nextSectionPath.String)
+		}
+		if nextBBox.Valid {
+			nextChunk.UnmarshalBBox(nextBBox.String)
+		}
+		if nextEmbeddingID.Valid {
+			nextChunk.EmbeddingID = &nextEmbeddingID.String
+		}
+		result.Next = nextChunk
+	} else if err != sql.ErrNoRows {
+		return nil, fmt.Errorf("get next chunk: %w", err)
+	}
+
+	return result, nil
 }
 
 // UpdateDocumentMetadata updates the metadata for a document
