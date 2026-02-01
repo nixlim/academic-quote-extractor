@@ -14,7 +14,7 @@ __[WARNING]__
 
 ---
 
-![Goblins Working](Goblins_working_on_aqe.png)
+![Goblins Working](inventor.png)
 
 # Academic Quote Extractor (aqe)
 
