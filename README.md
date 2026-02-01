@@ -1,6 +1,3 @@
-
-![Academic Quote Extractor](inventor.png)
-
 __[WARNING]__
 # THIS IS EXPERIMENTAL SOFTWARE
 I wrangled this tool with AI because reading Curturally Responsive Computing for my course, in full, would be too painful. Literally. My brain would melt. It is a quarter knowledge with verbose ages old human pain as a remainder. I don't have space for all the violins in my head.
