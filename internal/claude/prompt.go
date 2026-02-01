@@ -4,8 +4,103 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"text/template"
 )
+
+const queryExpansionPromptTemplate = `You are a search query optimizer for an academic document search system.
+
+Given a research topic, generate {{.Count}} alternative search queries that would help find relevant passages in academic documents. Each query should use different vocabulary, synonyms, or related concepts to maximize recall.
+
+TOPIC: {{.Topic}}
+
+RULES:
+- Each query should be 3-8 words of search terms (not a full sentence)
+- Use different keywords and phrasings across queries
+- Include synonyms, related academic terms, and alternative framings
+- Do NOT repeat the original topic verbatim as one of the queries
+- Return ONLY the JSON response, no other text
+
+Respond with a JSON object in exactly this format:
+{
+  "queries": [
+    "first alternative search query",
+    "second alternative search query",
+    "third alternative search query"
+  ]
+}`
+
+var queryExpansionTemplate = template.Must(template.New("queryExpansion").Parse(queryExpansionPromptTemplate))
+
+// QueryExpansionResponse is the expected response from Claude for query expansion
+type QueryExpansionResponse struct {
+	Queries []string `json:"queries"`
+}
+
+// buildQueryExpansionPrompt creates the prompt for query expansion
+func (w *Wrapper) buildQueryExpansionPrompt(topic string, count int) (string, error) {
+	var buf bytes.Buffer
+
+	data := struct {
+		Topic string
+		Count int
+	}{
+		Topic: topic,
+		Count: count,
+	}
+
+	if err := queryExpansionTemplate.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("execute query expansion template: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
+// parseQueryExpansionResponse extracts queries from Claude's response
+func parseQueryExpansionResponse(output []byte) ([]string, error) {
+	// Try to unwrap CLI envelope first
+	var envelope CLIEnvelope
+	if err := json.Unmarshal(output, &envelope); err == nil && envelope.Type == "result" {
+		if envelope.IsError {
+			return nil, fmt.Errorf("claude returned error: %s", envelope.Result)
+		}
+
+		var resp QueryExpansionResponse
+		if err := json.Unmarshal([]byte(envelope.Result), &resp); err != nil {
+			extracted := extractJSON([]byte(envelope.Result))
+			if extracted != nil {
+				if err := json.Unmarshal(extracted, &resp); err != nil {
+					return nil, fmt.Errorf("parse query expansion result: %w", err)
+				}
+			} else {
+				return nil, fmt.Errorf("parse query expansion result: %w", err)
+			}
+		}
+		return resp.Queries, nil
+	}
+
+	// Fallback: try direct parse
+	var resp QueryExpansionResponse
+	if err := json.Unmarshal(output, &resp); err != nil {
+		extracted := extractJSON(output)
+		if extracted != nil {
+			if err := json.Unmarshal(extracted, &resp); err != nil {
+				return nil, fmt.Errorf("parse query expansion response: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("parse query expansion response: %w", err)
+		}
+	}
+	return resp.Queries, nil
+}
+
+// sanitizeQuery cleans a query string for use as a search query
+func sanitizeQuery(q string) string {
+	q = strings.TrimSpace(q)
+	// Remove surrounding quotes if present
+	q = strings.Trim(q, "\"'")
+	return q
+}
 
 const extractionPromptTemplate = `You are an academic research assistant helping extract relevant quotes from a corpus of academic documents.
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"time"
 )
 
@@ -48,11 +49,17 @@ type SelectedChunk struct {
 	Explanation string `json:"explanation"`
 }
 
+// DefaultBatchSize is the number of chunks per Claude CLI call in batched mode.
+// With ~800-token chunks plus adjacent context, 30 chunks produces a prompt that
+// fits comfortably within Claude's context window without OOM risk.
+const DefaultBatchSize = 30
+
 // Wrapper provides access to the Claude CLI
 type Wrapper struct {
-	cliPath string
-	timeout time.Duration
-	debug   bool
+	cliPath   string
+	timeout   time.Duration
+	debug     bool
+	batchSize int
 }
 
 // NewWrapper creates a new Claude CLI wrapper
@@ -64,15 +71,68 @@ func NewWrapper(timeout time.Duration) (*Wrapper, error) {
 	}
 
 	return &Wrapper{
-		cliPath: cliPath,
-		timeout: timeout,
-		debug:   false,
+		cliPath:   cliPath,
+		timeout:   timeout,
+		debug:     false,
+		batchSize: DefaultBatchSize,
 	}, nil
 }
 
 // SetDebug enables or disables debug logging
 func (w *Wrapper) SetDebug(debug bool) {
 	w.debug = debug
+}
+
+// ExpandQuery calls Claude to generate alternative search queries for a topic.
+// Returns the expanded queries (not including the original topic).
+func (w *Wrapper) ExpandQuery(ctx context.Context, topic string, count int) ([]string, error) {
+	prompt, err := w.buildQueryExpansionPrompt(topic, count)
+	if err != nil {
+		return nil, fmt.Errorf("build query expansion prompt: %w", err)
+	}
+
+	if w.debug {
+		fmt.Printf("[DEBUG] Query expansion prompt length: %d characters\n", len(prompt))
+	}
+
+	// Use a shorter timeout for query expansion — it's a small prompt
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// IMPORTANT: -p flag must be LAST
+	cmd := exec.CommandContext(ctx, w.cliPath,
+		"--print",
+		"--output-format", "json",
+		"-p", prompt,
+	)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("run claude for query expansion: %w\nstderr: %s", err, stderr.String())
+	}
+
+	queries, err := parseQueryExpansionResponse(stdout.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("parse query expansion: %w", err)
+	}
+
+	// Sanitize and filter empty queries
+	var cleaned []string
+	for _, q := range queries {
+		q = sanitizeQuery(q)
+		if q != "" {
+			cleaned = append(cleaned, q)
+		}
+	}
+
+	if w.debug {
+		fmt.Printf("[DEBUG] Query expansion generated %d queries: %v\n", len(cleaned), cleaned)
+	}
+
+	return cleaned, nil
 }
 
 // ExtractQuotes calls Claude to score and select relevant quotes
@@ -207,6 +267,74 @@ func extractJSON(data []byte) []byte {
 	}
 
 	return data[start : end+1]
+}
+
+// SetBatchSize sets the number of chunks per Claude CLI call in batched mode
+func (w *Wrapper) SetBatchSize(size int) {
+	if size > 0 {
+		w.batchSize = size
+	}
+}
+
+// ExtractQuotesBatched splits candidates into batches and scores each separately,
+// then merges results sorted by relevance. This avoids OOM/timeout issues with
+// large candidate sets while allowing evaluation of more chunks overall.
+func (w *Wrapper) ExtractQuotesBatched(ctx context.Context, task ExtractionTask) (*ExtractionResponse, error) {
+	// If chunks fit in a single batch, skip batching overhead
+	if len(task.Chunks) <= w.batchSize {
+		return w.ExtractQuotes(ctx, task)
+	}
+
+	batches := splitChunks(task.Chunks, w.batchSize)
+	if w.debug {
+		fmt.Printf("[DEBUG] Splitting %d chunks into %d batches of up to %d\n",
+			len(task.Chunks), len(batches), w.batchSize)
+	}
+
+	var allSelected []SelectedChunk
+
+	for i, batch := range batches {
+		if w.debug {
+			fmt.Printf("[DEBUG] Scoring batch %d/%d (%d chunks)\n", i+1, len(batches), len(batch))
+		}
+
+		batchTask := ExtractionTask{
+			Topic:  task.Topic,
+			Chunks: batch,
+		}
+
+		resp, err := w.ExtractQuotes(ctx, batchTask)
+		if err != nil {
+			return nil, fmt.Errorf("batch %d/%d: %w", i+1, len(batches), err)
+		}
+
+		allSelected = append(allSelected, resp.SelectedChunks...)
+	}
+
+	// Sort merged results by relevance score descending
+	sort.Slice(allSelected, func(i, j int) bool {
+		return allSelected[i].Relevance > allSelected[j].Relevance
+	})
+
+	if w.debug {
+		fmt.Printf("[DEBUG] Batched scoring complete: %d total selected chunks from %d batches\n",
+			len(allSelected), len(batches))
+	}
+
+	return &ExtractionResponse{SelectedChunks: allSelected}, nil
+}
+
+// splitChunks divides a slice of ChunkInput into batches of the given size.
+func splitChunks(chunks []ChunkInput, batchSize int) [][]ChunkInput {
+	var batches [][]ChunkInput
+	for i := 0; i < len(chunks); i += batchSize {
+		end := i + batchSize
+		if end > len(chunks) {
+			end = len(chunks)
+		}
+		batches = append(batches, chunks[i:end])
+	}
+	return batches
 }
 
 // ValidateResponse is exported for testing

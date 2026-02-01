@@ -241,7 +241,17 @@ See `STATUS.md` for known limitations, technical debt, and test coverage gaps.
 ### Research Findings - Chunking Pipeline:
 The local Docling pipeline (`scripts/process_document.py`) uses HybridChunker with 800-token max and
 200-word overlap between adjacent chunks. Position tracking enables adjacent context lookup during
-extraction. Default `--candidates 30` works well with ~800-token chunks; higher values risk OOM in Claude CLI.
+extraction. Default `--candidates 60` with batched scoring (30 chunks per Claude CLI call).
+
+### Research Findings - Query Expansion + Batched Scoring:
+`aqe extract` now uses two quality improvements:
+1. **Query expansion**: Before searching, Claude generates 3 alternative search queries with different
+   vocabulary/synonyms. Each query runs as a separate Weaviate hybrid search, results are deduplicated
+   by chunk ID. Disable with `--no-expand`. Cost: ~$0.01 per expansion call.
+2. **Batched scoring**: Candidates are split into batches of 30 and scored separately, then merged and
+   sorted by relevance. This removes the OOM ceiling on candidate count.
+Combined effect: 4x more unique candidates evaluated (126 vs 30), significantly higher top relevance
+scores (92 vs 78 in testing), and better coverage across the corpus.
 
 ### Research Findings - Claude CLI --output-format json:
 When using claude --print --output-format json -p "<prompt>", the output is a JSON envelope:

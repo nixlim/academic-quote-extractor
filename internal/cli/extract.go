@@ -22,6 +22,7 @@ var (
 	maxQuotes      int
 	minRelevance   int
 	candidateLimit int
+	noExpand       bool
 )
 
 // extractCmd represents the extract command
@@ -48,7 +49,8 @@ func init() {
 
 	extractCmd.Flags().IntVar(&maxQuotes, "max-quotes", 20, "Maximum number of quotes to return")
 	extractCmd.Flags().IntVar(&minRelevance, "min-relevance", 60, "Minimum relevance score (0-100)")
-	extractCmd.Flags().IntVar(&candidateLimit, "candidates", 30, "Number of candidate chunks to retrieve for LLM scoring")
+	extractCmd.Flags().IntVar(&candidateLimit, "candidates", 60, "Number of candidate chunks to retrieve per search query")
+	extractCmd.Flags().BoolVar(&noExpand, "no-expand", false, "Disable query expansion (skip generating alternative search queries)")
 }
 
 func runExtract(cmd *cobra.Command, args []string) error {
@@ -69,7 +71,18 @@ func runExtract(cmd *cobra.Command, args []string) error {
 		os.Exit(ExitUserError)
 	}
 
-	fmt.Println("Searching for relevant quotes...")
+	// Initialize Claude wrapper early — needed for both query expansion and scoring
+	claudeWrapper, err := claude.NewWrapper(120 * time.Second)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error: Claude CLI not available")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "The claude CLI was not found in PATH.")
+		fmt.Fprintln(os.Stderr, "Install it from: https://claude.ai/code")
+		os.Exit(ExitSysError)
+	}
+	if IsDebug() {
+		claudeWrapper.SetDebug(true)
+	}
 
 	// Initialize Weaviate client
 	weaviateClient, err := search.NewWeaviateClient("localhost:8080", "http://ollama:11434")
@@ -83,26 +96,61 @@ func runExtract(cmd *cobra.Command, args []string) error {
 		weaviateClient.SetDebug(true)
 	}
 
-	// Perform hybrid search - use configured candidate limit
+	// Build search queries: original topic + expanded variants
+	queries := []string{topic}
+
+	if !noExpand {
+		fmt.Println("Expanding search queries...")
+		expanded, err := claudeWrapper.ExpandQuery(ctx, topic, 3)
+		if err != nil {
+			// Query expansion failure is non-fatal — fall back to original topic only
+			Debugf("Query expansion failed (using original topic only): %v", err)
+			fmt.Println("Query expansion unavailable, using original topic")
+		} else {
+			queries = append(queries, expanded...)
+			if IsDebug() {
+				fmt.Printf("[DEBUG] Search queries (%d total):\n", len(queries))
+				for i, q := range queries {
+					fmt.Printf("[DEBUG]   %d: %s\n", i+1, q)
+				}
+			}
+		}
+	}
+
+	fmt.Println("Searching for relevant quotes...")
+
+	// Perform hybrid search for each query, deduplicate by chunk ID
 	searchLimit := candidateLimit
 	if maxQuotes > searchLimit/2 {
 		searchLimit = maxQuotes * 2 // Ensure we get enough candidates
 	}
 
-	results, err := weaviateClient.HybridSearch(ctx, topic, searchLimit, 0.5)
-	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") {
-			fmt.Fprintln(os.Stderr, "Error: Search service unavailable")
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "The Weaviate service is not responding at localhost:8080.")
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "To fix:")
-			fmt.Fprintln(os.Stderr, "  1. Check if Docker is running: docker ps")
-			fmt.Fprintln(os.Stderr, "  2. Start services: docker-compose up -d")
-			fmt.Fprintln(os.Stderr, "  3. Wait for Weaviate to be ready: curl http://localhost:8080/v1/.well-known/ready")
-			os.Exit(ExitSysError)
+	seen := make(map[string]bool)
+	var results []search.ChunkResult
+
+	for _, query := range queries {
+		qResults, err := weaviateClient.HybridSearch(ctx, query, searchLimit, 0.5)
+		if err != nil {
+			if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") {
+				fmt.Fprintln(os.Stderr, "Error: Search service unavailable")
+				fmt.Fprintln(os.Stderr, "")
+				fmt.Fprintln(os.Stderr, "The Weaviate service is not responding at localhost:8080.")
+				fmt.Fprintln(os.Stderr, "")
+				fmt.Fprintln(os.Stderr, "To fix:")
+				fmt.Fprintln(os.Stderr, "  1. Check if Docker is running: docker ps")
+				fmt.Fprintln(os.Stderr, "  2. Start services: docker-compose up -d")
+				fmt.Fprintln(os.Stderr, "  3. Wait for Weaviate to be ready: curl http://localhost:8080/v1/.well-known/ready")
+				os.Exit(ExitSysError)
+			}
+			return fmt.Errorf("search: %w", err)
 		}
-		return fmt.Errorf("search: %w", err)
+
+		for _, r := range qResults {
+			if !seen[r.ChunkID] {
+				seen[r.ChunkID] = true
+				results = append(results, r)
+			}
+		}
 	}
 
 	if len(results) == 0 {
@@ -113,7 +161,11 @@ func runExtract(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("Found %d candidate chunks\n", len(results))
+	if len(queries) > 1 {
+		fmt.Printf("Found %d unique candidate chunks across %d search queries\n", len(results), len(queries))
+	} else {
+		fmt.Printf("Found %d candidate chunks\n", len(results))
+	}
 	fmt.Println("Scoring relevance with Claude...")
 
 	// Build chunk inputs for Claude with adjacent context
@@ -144,25 +196,13 @@ func runExtract(cmd *cobra.Command, args []string) error {
 		chunkInputs[i] = input
 	}
 
-	// Call Claude for relevance scoring
-	claudeWrapper, err := claude.NewWrapper(120 * time.Second)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error: Claude CLI not available")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "The claude CLI was not found in PATH.")
-		fmt.Fprintln(os.Stderr, "Install it from: https://claude.ai/code")
-		os.Exit(ExitSysError)
-	}
-	if IsDebug() {
-		claudeWrapper.SetDebug(true)
-	}
-
+	// Score relevance with Claude using batched scoring
 	task := claude.ExtractionTask{
 		Topic:  topic,
 		Chunks: chunkInputs,
 	}
 
-	response, err := claudeWrapper.ExtractQuotes(ctx, task)
+	response, err := claudeWrapper.ExtractQuotesBatched(ctx, task)
 	if err != nil {
 		return fmt.Errorf("extract quotes: %w", err)
 	}
@@ -177,6 +217,24 @@ func runExtract(cmd *cobra.Command, args []string) error {
 			break
 		}
 	}
+
+	if len(selectedChunks) == 0 {
+		fmt.Printf("\nNo quotes met the minimum relevance threshold (%d).\n", minRelevance)
+		fmt.Println("Try lowering --min-relevance or using different search terms.")
+		return nil
+	}
+
+	// Filter out chunks that don't exist in SQLite (e.g., stale Weaviate data)
+	var validChunks []claude.SelectedChunk
+	for _, sc := range selectedChunks {
+		_, err := getChunkWithDocument(db, sc.ChunkID)
+		if err != nil {
+			Debugf("Skipping chunk %s: not found in database: %v", sc.ChunkID, err)
+			continue
+		}
+		validChunks = append(validChunks, sc)
+	}
+	selectedChunks = validChunks
 
 	if len(selectedChunks) == 0 {
 		fmt.Printf("\nNo quotes met the minimum relevance threshold (%d).\n", minRelevance)
