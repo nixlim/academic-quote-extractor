@@ -24,7 +24,7 @@ A Go CLI application for extracting relevant quotes from academic documents with
 
 AQE uses a hybrid RAG (Retrieval-Augmented Generation) architecture:
 
-1. **Ingest** -- Parse PDF, DOCX, or TXT documents via Docling, chunk them hierarchically, generate vector embeddings via Ollama, and store verbatim text in SQLite.
+1. **Ingest** -- Parse PDF, DOCX, or TXT documents via a local Docling Python subprocess, chunk them with `HybridChunker` (~800-token chunks with 200-token overlap), generate vector embeddings via Ollama, and store verbatim text in SQLite.
 2. **Extract** -- Given a research topic, perform hybrid BM25 + vector search in Weaviate, send top candidates to Claude for relevance scoring, and save results.
 3. **Export** -- Output saved extractions as Markdown (with blockquotes and bibliography), JSON, or BibTeX.
 
@@ -33,9 +33,12 @@ AQE uses a hybrid RAG (Retrieval-Augmented Generation) architecture:
 ## Quick Example
 
 ```bash
-# Start services
-docker-compose up -d
+# Start services (Weaviate + Ollama)
+docker compose up -d
 docker exec -it ollama ollama pull nomic-embed-text
+
+# Install Python dependencies for local Docling
+pip3 install -r scripts/requirements.txt
 
 # Build
 go build -o aqe ./cmd/aqe
@@ -101,6 +104,7 @@ go build -o aqe ./cmd/aqe
 | `aqe export <id>` | Export a saved extraction (Markdown, JSON, BibTeX) |
 | `aqe list` | List all saved extractions |
 | `aqe meta fix` | Interactively fix missing document metadata |
+| `aqe reindex` | Rebuild the Weaviate vector index from SQLite (drops + recreates the Chunk class, re-embeds every chunk) |
 | `aqe status` | Show infrastructure and database status |
 
 Run `./aqe --help` or `./aqe <command> --help` for built-in usage. See [CLI Reference](CLI_REFERENCE.md) for the full reference with examples and error handling.
@@ -119,8 +123,8 @@ Run `./aqe --help` or `./aqe <command> --help` for built-in usage. See [CLI Refe
      +--------+-------+  +--------+--------+  +--------+--------+
               |                    |                     |
   +-----------+----------+   +----+----+          +-----+-----+
-  | Docling   | Python   |   |Weaviate |          |  SQLite   |
-  | (parsing) | Chunker  |   |(search) |          |  (data)   |
+  | Docling + HybridChunker  |Weaviate |          |  SQLite   |
+  | (local Python subprocess)|(search) |          |  (data)   |
   +-----------+----------+   +----+----+          +-----+-----+
                                   |
                             +-----+------+
@@ -130,9 +134,11 @@ Run `./aqe --help` or `./aqe <command> --help` for built-in usage. See [CLI Refe
 ```
 
 **Services** (Docker):
-- **Docling** -- Document parsing (PDF, DOCX, TXT) with layout analysis
 - **Weaviate** -- Vector database with hybrid BM25 + semantic search
-- **Ollama** -- Local embedding generation (nomic-embed-text, 768 dimensions)
+- **Ollama** -- Local embedding generation (nomic-embed-text, 768 dimensions). Alternatively use a host-side Ollama for Metal GPU acceleration (see [Developer Quickstart](DEV_QUICKSTART.md)).
+
+**Local Python subprocess**:
+- **Docling + HybridChunker** -- Document parsing (PDF, DOCX, TXT) with layout analysis and token-aware chunking. Invoked by the Go ingest flow via `scripts/process_document.py`.
 
 **Embedded**:
 - **SQLite** -- Stores documents, chunks, extractions, and quote text
@@ -160,18 +166,20 @@ Standard BibTeX bibliography entries for all cited sources.
 | Requirement | Version | What it does | Install |
 |---|---|---|---|
 | **Go** | 1.25+ | Builds and runs the CLI. CGO must be enabled (`CGO_ENABLED=1`) because SQLite uses a C driver. | [go.dev/dl](https://go.dev/dl/) |
-| **Docker** | 20.10+ | Runs Docling, Weaviate, and Ollama as containers. | [docs.docker.com](https://docs.docker.com/get-docker/) |
-| **Docker Compose** | 2.0+ | Orchestrates the three services from the included `docker-compose.yml`. | Included with Docker Desktop, or install the plugin separately. |
-| **Python 3** | 3.9+ | Runs the chunking script (`scripts/chunk_helper.py`) that splits documents into hierarchical chunks. | [python.org](https://www.python.org/downloads/) |
+| **Docker** | 20.10+ | Runs Weaviate and Ollama as containers (Docling runs as a local Python subprocess, not in Docker). | [docs.docker.com](https://docs.docker.com/get-docker/) |
+| **Docker Compose** | 2.0+ | Orchestrates Weaviate + Ollama from the included `docker-compose.yml`. | Included with Docker Desktop, or install the plugin separately. |
+| **Python 3** | 3.11+ | Runs the Docling parsing + `HybridChunker` pipeline (`scripts/process_document.py`) as a local subprocess. | [python.org](https://www.python.org/downloads/) |
 | **Claude CLI** | Latest | Scores candidate chunks for relevance during extraction. Must be authenticated and available in your PATH. | `npm install -g @anthropic-ai/claude-code` |
 
 ### Python packages
 
-The chunker requires two packages from the Docling project:
+The local ingest pipeline (Docling + `HybridChunker`) needs the dependencies pinned in `scripts/requirements.txt`:
 
 ```bash
-pip3 install "docling>=2.70.0" "docling-core>=2.0.0"
+pip3 install -r scripts/requirements.txt
 ```
+
+This installs `docling>=2.70.0`, `docling-core>=2.61.0`, `transformers>=4.0.0`, and `sentence-transformers>=2.0.0`.
 
 ### Verify your setup
 
@@ -190,15 +198,18 @@ All five commands should succeed before you proceed to [User Quickstart](USERS_Q
 ```
 cmd/aqe/          CLI entry point
 internal/
-  cli/            Cobra commands (ingest, extract, export, list, meta, status)
-  docling/        HTTP client for Docling-serve
-  chunker/        Python wrapper for HierarchicalChunker
-  claude/         Claude CLI wrapper and prompt templates
+  cli/            Cobra commands (ingest, extract, export, list, meta, reindex, status)
+  docling/        Local Python subprocess wrapper for Docling + HybridChunker (processor.go)
+  chunker/        Legacy Python wrapper (deprecated; superseded by docling/processor.go)
+  claude/         Claude CLI wrapper, prompt templates, query expansion, batched scoring
   search/         Weaviate client (insert, hybrid search, delete)
   store/          SQLite operations and migrations
   harvard/        Harvard reference formatting (pure Go)
   models/         Domain types (Document, Chunk, Extraction, Quote)
-scripts/          Python chunking script
+scripts/
+  process_document.py   Entry point for parse + chunk + overlap pipeline
+  lib/                  parser.py, chunker.py, overlap.py
+  requirements.txt      Pinned Python dependencies
 tests/
   unit/           Unit tests (no Docker required)
   contract/       API contract tests (require Docker)
