@@ -10,14 +10,14 @@ services:
     container_name: weaviate
     ports:
       - "8080:8080"
-      - "50051:50051"
+      - "50052:50051"
     environment:
       QUERY_DEFAULTS_LIMIT: 25
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
       DEFAULT_VECTORIZER_MODULE: 'text2vec-ollama'
       ENABLE_MODULES: 'text2vec-ollama'
-      OLLAMA_API_ENDPOINT: 'http://ollama:11434'
+      OLLAMA_API_ENDPOINT: 'http://host.docker.internal:11434'
       CLUSTER_HOSTNAME: 'node1'
     volumes:
       - weaviate_data:/var/lib/weaviate

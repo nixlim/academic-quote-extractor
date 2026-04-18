@@ -58,9 +58,9 @@ func (w *Wrapper) buildQueryExpansionPrompt(topic string, count int) (string, er
 
 // parseQueryExpansionResponse extracts queries from Claude's response
 func parseQueryExpansionResponse(output []byte) ([]string, error) {
-	// Try to unwrap CLI envelope first
-	var envelope CLIEnvelope
-	if err := json.Unmarshal(output, &envelope); err == nil && envelope.Type == "result" {
+	// Try to unwrap CLI envelope first (handles both single-object and
+	// array-of-events shapes returned by different Claude CLI versions).
+	if envelope, ok := unwrapCLIOutput(output); ok {
 		if envelope.IsError {
 			return nil, fmt.Errorf("claude returned error: %s", envelope.Result)
 		}

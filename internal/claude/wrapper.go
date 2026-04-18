@@ -178,10 +178,9 @@ func (w *Wrapper) ExtractQuotes(ctx context.Context, task ExtractionTask) (*Extr
 
 	var response ExtractionResponse
 
-	// Step 1: Try to unwrap the CLI JSON envelope
-	var envelope CLIEnvelope
-	if err := json.Unmarshal(rawOutput, &envelope); err == nil && envelope.Type == "result" {
-		// Successfully parsed the envelope
+	// Step 1: Try to unwrap the CLI JSON envelope (handles both single-object
+	// and array-of-events shapes returned by different Claude CLI versions).
+	if envelope, ok := unwrapCLIOutput(rawOutput); ok {
 		if envelope.IsError {
 			return nil, fmt.Errorf("claude returned error: %s", envelope.Result)
 		}
@@ -267,6 +266,35 @@ func extractJSON(data []byte) []byte {
 	}
 
 	return data[start : end+1]
+}
+
+// unwrapCLIOutput normalises the raw stdout from `claude --output-format json`
+// into a single CLIEnvelope. The CLI has shipped two shapes over time:
+//
+//  1. A single envelope object: {"type":"result",...}
+//  2. A JSON array of stream events: [{"type":"system"},{"type":"assistant"},{"type":"result"},...]
+//
+// For (2) we locate the element with type=="result" and return it.
+// Returns (envelope, true) on success, (zero, false) otherwise.
+func unwrapCLIOutput(raw []byte) (CLIEnvelope, bool) {
+	// Case 1: single object
+	var single CLIEnvelope
+	if err := json.Unmarshal(raw, &single); err == nil && single.Type == "result" {
+		return single, true
+	}
+
+	// Case 2: array of stream events — find the result element
+	var events []json.RawMessage
+	if err := json.Unmarshal(raw, &events); err == nil {
+		for _, ev := range events {
+			var env CLIEnvelope
+			if err := json.Unmarshal(ev, &env); err == nil && env.Type == "result" {
+				return env, true
+			}
+		}
+	}
+
+	return CLIEnvelope{}, false
 }
 
 // SetBatchSize sets the number of chunks per Claude CLI call in batched mode
